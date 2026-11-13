@@ -26,6 +26,18 @@ export class User {
   @Column({ default: '' })
   phone: string;
 
+  @Column({ default: '' })
+  username: string;
+
+  @Column({ type: 'text', default: '' })
+  bio: string;
+
+  @Column({ default: '' })
+  city: string;
+
+  @Column({ nullable: true })
+  coverUrl: string;
+
   @Column({ default: 'PENYEWA' })
   role: string;
 

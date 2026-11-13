@@ -86,6 +86,12 @@ export class Kost {
   @Column({ default: '' })
   nearbyLandmark: string;
 
+  @Column({ type: 'double precision', nullable: true })
+  latitude: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  longitude: number | null;
+
   @Column({ default: false })
   isFavorite: boolean;
 

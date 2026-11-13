@@ -6,7 +6,7 @@
   "scripts": {
     "db:up": "bash ./ensure-postgres.sh",
     "build": "tsc",
-    "prestart": "bash ./ensure-postgres.sh && tsc",
+    "prestart": "tsc",
     "start": "node dist/main.js",
     "start:dev": "bash ./ensure-postgres.sh && tsc && node dist/main.js"
   },

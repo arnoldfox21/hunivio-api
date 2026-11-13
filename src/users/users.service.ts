@@ -154,6 +154,21 @@ export class UsersService {
     if (dto.role !== undefined && dto.role.trim().length > 0) {
       user.role = dto.role.trim().toUpperCase();
     }
+    if (dto.username !== undefined) {
+      user.username = dto.username.trim().replace(/^@+/, '');
+    }
+    if (dto.bio !== undefined) {
+      user.bio = dto.bio.trim();
+    }
+    if (dto.city !== undefined) {
+      user.city = dto.city.trim();
+    }
+    if (dto.avatarUrl !== undefined && dto.avatarUrl.trim().length > 0) {
+      user.avatarUrl = dto.avatarUrl.trim();
+    }
+    if (dto.coverUrl !== undefined) {
+      user.coverUrl = dto.coverUrl.trim();
+    }
     return this.userRepository.save(user);
   }
 

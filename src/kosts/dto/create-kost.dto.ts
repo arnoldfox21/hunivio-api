@@ -96,4 +96,12 @@ export class CreateKostDto {
   @IsOptional()
   @IsString()
   nearbyLandmark?: string;
+
+  @IsOptional()
+  @IsNumber()
+  latitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  longitude?: number;
 }
