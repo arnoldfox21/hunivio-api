@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Kost } from './kosts/entities/kost.entity';
 import { Facility } from './kosts/entities/facility.entity';
+import { UserFavorite } from './kosts/entities/user-favorite.entity';
 import { Booking } from './bookings/entities/booking.entity';
 import { User } from './users/entities/user.entity';
 import { ChatMessage } from './chats/entities/chat-message.entity';
@@ -10,6 +11,8 @@ import { KostGroupMessage } from './chats/entities/kost-group-message.entity';
 import { KostGroupSetting } from './chats/entities/kost-group-setting.entity';
 import { Review } from './reviews/entities/review.entity';
 import { OwnerPost } from './posts/entities/owner-post.entity';
+import { OwnerPostComment } from './posts/entities/owner-post-comment.entity';
+import { OwnerPostLike } from './posts/entities/owner-post-like.entity';
 import { Region } from './locations/entities/region.entity';
 import { KostsModule } from './kosts/kosts.module';
 import { BookingsModule } from './bookings/bookings.module';
@@ -33,6 +36,7 @@ import { LocationsModule } from './locations/locations.module';
             entities: [
               Kost,
               Facility,
+              UserFavorite,
               Booking,
               User,
               ChatMessage,
@@ -40,6 +44,8 @@ import { LocationsModule } from './locations/locations.module';
               KostGroupSetting,
               Review,
               OwnerPost,
+              OwnerPostComment,
+              OwnerPostLike,
               Region,
             ],
             synchronize: true,
@@ -54,6 +60,7 @@ import { LocationsModule } from './locations/locations.module';
             entities: [
               Kost,
               Facility,
+              UserFavorite,
               Booking,
               User,
               ChatMessage,
@@ -61,6 +68,8 @@ import { LocationsModule } from './locations/locations.module';
               KostGroupSetting,
               Review,
               OwnerPost,
+              OwnerPostComment,
+              OwnerPostLike,
               Region,
             ],
             synchronize: true,

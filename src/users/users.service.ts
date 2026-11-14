@@ -42,6 +42,9 @@ export class UsersService {
       city: user.city,
       coverUrl: user.coverUrl,
       role: user.role,
+      showWhatsapp: Boolean(user.showWhatsapp),
+      isBanned: Boolean(user.isBanned),
+      bannedAt: user.bannedAt ?? null,
       onboardingCompleted: user.onboardingCompleted ?? true,
       preferredCategory: user.preferredCategory ?? '',
       lastLoginAt: user.lastLoginAt,
@@ -49,6 +52,12 @@ export class UsersService {
       updatedAt: user.updatedAt,
     };
     if (!includePrivate) {
+      if (user.showWhatsapp && user.phone && user.phone.trim().length > 0) {
+        return {
+          ...base,
+          phone: user.phone,
+        };
+      }
       return base;
     }
     return {
@@ -147,6 +156,11 @@ export class UsersService {
         lastLoginAt: new Date(),
       });
     } else {
+      if (user.isBanned) {
+        throw new ForbiddenException(
+          'Akun Anda telah dibanned dan tidak dapat masuk ke aplikasi.',
+        );
+      }
       user.googleId = googleId;
       user.email = email;
       if (!user.name || user.name.trim().length === 0) {
@@ -203,6 +217,9 @@ export class UsersService {
     }
     if (dto.phone !== undefined) {
       user.phone = dto.phone.trim();
+    }
+    if (dto.showWhatsapp !== undefined) {
+      user.showWhatsapp = Boolean(dto.showWhatsapp);
     }
     if (dto.role !== undefined && dto.role.trim().length > 0) {
       const requestedRole = dto.role.trim().toUpperCase();
@@ -333,6 +350,30 @@ export class UsersService {
     const user = await this.userRepository.findOne({ where: { id } });
     const token = user?.fcmToken?.trim();
     return token && token.length > 0 ? token : null;
+  }
+
+  async setBanStatus(
+    id: number,
+    isBanned: boolean,
+    requesterId: number,
+  ): Promise<User> {
+    if (id === 1) {
+      throw new ForbiddenException(
+        'Administrator utama (ID 1) tidak dapat dibanned.',
+      );
+    }
+    if (id === requesterId) {
+      throw new ForbiddenException(
+        'Anda tidak dapat mem-banned akun Anda sendiri.',
+      );
+    }
+    const user = await this.findOne(id);
+    user.isBanned = isBanned;
+    user.bannedAt = isBanned ? new Date() : null;
+    if (isBanned) {
+      user.fcmToken = '';
+    }
+    return this.userRepository.save(user);
   }
 
   async remove(id: number): Promise<{ deleted: boolean; id: number }> {

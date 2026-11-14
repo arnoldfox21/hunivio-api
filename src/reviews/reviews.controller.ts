@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Param,
   Body,
   Query,
   ParseIntPipe,
@@ -10,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ReviewsService } from './reviews.service';
 import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
+import { Roles, RolesGuard } from '../auth/roles.guard';
 
 @Controller('reviews')
 export class ReviewsController {
@@ -37,5 +40,21 @@ export class ReviewsController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.reviewsService.create({ ...body, userId: req.user.userId });
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('PEMILIK_KOST', 'STAFF', 'ADMINISTRATOR')
+  @Patch(':id/reply')
+  reply(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('reply') reply: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.reviewsService.replyToReview(
+      id,
+      req.user.userId,
+      req.user.role,
+      reply,
+    );
   }
 }

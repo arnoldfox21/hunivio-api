@@ -70,8 +70,14 @@ export class BookingsController {
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { status: string },
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.bookingsService.updateStatus(id, body.status);
+    return this.bookingsService.updateStatus(
+      id,
+      body.status,
+      req.user.userId,
+      req.user.role,
+    );
   }
 
   @Patch(':id/cancel')
@@ -79,14 +85,10 @@ export class BookingsController {
     @Param('id', ParseIntPipe) id: number,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.bookingsService.cancelBooking(id, req.user.userId);
-  }
-
-  @Post(':id/pay')
-  payBooking(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: { paymentMethod?: string },
-  ) {
-    return this.bookingsService.payBooking(id, body?.paymentMethod);
+    return this.bookingsService.cancelBooking(
+      id,
+      req.user.userId,
+      req.user.role,
+    );
   }
 }

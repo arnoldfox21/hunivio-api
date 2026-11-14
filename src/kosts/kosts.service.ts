@@ -9,10 +9,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Kost } from './entities/kost.entity';
 import { Facility } from './entities/facility.entity';
+import { UserFavorite } from './entities/user-favorite.entity';
 import { User } from '../users/entities/user.entity';
 import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
 import { buildMalangDummyKosts, buildMalangApartmentsAndKontrakans } from './malang-kosts.seed';
+import { FirebaseNotificationService } from '../chats/firebase-notification.service';
 
 @Injectable()
 export class KostsService implements OnModuleInit {
@@ -21,8 +23,11 @@ export class KostsService implements OnModuleInit {
     private readonly kostRepository: Repository<Kost>,
     @InjectRepository(Facility)
     private readonly facilityRepository: Repository<Facility>,
+    @InjectRepository(UserFavorite)
+    private readonly favoriteRepository: Repository<UserFavorite>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly firebaseNotificationService: FirebaseNotificationService,
   ) {}
 
   async onModuleInit() {
@@ -196,6 +201,7 @@ export class KostsService implements OnModuleInit {
     approvalStatus?: string;
     page?: string;
     limit?: string;
+    viewerId?: number;
   }): Promise<any> {
     const qb = this.kostRepository.createQueryBuilder('kost');
 
@@ -227,7 +233,27 @@ export class KostsService implements OnModuleInit {
     }
 
     if (query.onlyFavorite === 'true') {
-      qb.andWhere('kost.isFavorite = true');
+      if (!query.viewerId) {
+        if (query.page || query.limit) {
+          const page = Math.max(1, parseInt(query.page || '1', 10) || 1);
+          const limit = Math.min(100, Math.max(1, parseInt(query.limit || '20', 10) || 20));
+          return { data: [], total: 0, page, limit, hasMore: false };
+        }
+        return [];
+      }
+      const favs = await this.favoriteRepository.find({
+        where: { userId: query.viewerId },
+      });
+      const favIds = favs.map((f) => f.kostId);
+      if (favIds.length === 0) {
+        if (query.page || query.limit) {
+          const page = Math.max(1, parseInt(query.page || '1', 10) || 1);
+          const limit = Math.min(100, Math.max(1, parseInt(query.limit || '20', 10) || 20));
+          return { data: [], total: 0, page, limit, hasMore: false };
+        }
+        return [];
+      }
+      qb.andWhere('kost.id IN (:...favIds)', { favIds });
     }
 
     if (query.search && query.search.trim() !== '') {
@@ -295,6 +321,7 @@ export class KostsService implements OnModuleInit {
         .take(limit)
         .getManyAndCount();
       await this.syncOwnerNames(data);
+      await this.attachUserFavorites(data, query.viewerId);
       return {
         data,
         total,
@@ -305,7 +332,30 @@ export class KostsService implements OnModuleInit {
     }
 
     const list = await qb.getMany();
-    return this.syncOwnerNames(list);
+    await this.syncOwnerNames(list);
+    return this.attachUserFavorites(list, query.viewerId);
+  }
+
+  private async attachUserFavorites(
+    kosts: Kost[],
+    viewerId?: number,
+  ): Promise<Kost[]> {
+    if (kosts.length === 0) return kosts;
+    if (!viewerId) {
+      for (const k of kosts) {
+        k.isFavorite = false;
+      }
+      return kosts;
+    }
+    const kostIds = kosts.map((k) => k.id);
+    const favs = await this.favoriteRepository.find({
+      where: { userId: viewerId, kostId: In(kostIds) },
+    });
+    const favSet = new Set(favs.map((f) => f.kostId));
+    for (const k of kosts) {
+      k.isFavorite = favSet.has(k.id);
+    }
+    return kosts;
   }
 
   private async syncOwnerNames(kosts: Kost[]): Promise<Kost[]> {
@@ -326,6 +376,9 @@ export class KostsService implements OnModuleInit {
           k.ownerPhone = owner.phone.trim();
         }
       }
+      (k as Kost & { showOwnerWhatsapp?: boolean }).showOwnerWhatsapp = Boolean(
+        owner?.showWhatsapp,
+      );
     }
     return kosts;
   }
@@ -433,36 +486,30 @@ export class KostsService implements OnModuleInit {
     };
   }
 
-  async toggleFavorite(id: number): Promise<Kost> {
-    const kost = await this.findOne(id);
-    kost.isFavorite = !kost.isFavorite;
-    return this.kostRepository.save(kost);
-  }
-
-  async decrementAvailableRoom(id: number): Promise<Kost> {
-    const kost = await this.findOne(id);
-    if (kost.availableRooms > 0) {
-      kost.availableRooms -= 1;
-      return this.kostRepository.save(kost);
+  async toggleFavorite(id: number, userId: number): Promise<Kost> {
+    const kost = await this.findOne(id, userId);
+    const existing = await this.favoriteRepository.findOne({
+      where: { userId, kostId: id },
+    });
+    if (existing) {
+      await this.favoriteRepository.remove(existing);
+      kost.isFavorite = false;
+    } else {
+      await this.favoriteRepository.save(
+        this.favoriteRepository.create({ userId, kostId: id }),
+      );
+      kost.isFavorite = true;
     }
     return kost;
   }
 
-  async incrementAvailableRoom(id: number): Promise<Kost> {
-    const kost = await this.findOne(id);
-    if (kost.availableRooms < kost.totalRooms) {
-      kost.availableRooms += 1;
-      return this.kostRepository.save(kost);
-    }
-    return kost;
-  }
-
-  async findOne(id: number): Promise<Kost> {
+  async findOne(id: number, viewerId?: number): Promise<Kost> {
     const kost = await this.kostRepository.findOne({ where: { id } });
     if (!kost) {
       throw new NotFoundException(`Kost dengan ID ${id} tidak ditemukan`);
     }
     await this.syncOwnerNames([kost]);
+    await this.attachUserFavorites([kost], viewerId);
     return kost;
   }
 
@@ -518,7 +565,43 @@ export class KostsService implements OnModuleInit {
     kost.approvalStatus = normalized;
     kost.rejectionReason =
       normalized === 'REJECTED' ? rejectionReason?.trim() || '' : '';
-    return this.kostRepository.save(kost);
+    const saved = await this.kostRepository.save(kost);
+
+    if (
+      (normalized === 'APPROVED' || normalized === 'REJECTED') &&
+      kost.ownerId
+    ) {
+      try {
+        const owner = await this.userRepository.findOne({
+          where: { id: kost.ownerId },
+        });
+        const token = owner?.fcmToken?.trim();
+        if (token) {
+          const title =
+            normalized === 'APPROVED'
+              ? 'Properti Disetujui'
+              : 'Properti Ditolak';
+          const body =
+            normalized === 'APPROVED'
+              ? `${kost.name} telah disetujui dan kini tampil di pencarian HuniVio.`
+              : `${kost.name} perlu diperbaiki${kost.rejectionReason ? `: ${kost.rejectionReason}` : '.'}`;
+          await this.firebaseNotificationService.sendGeneralNotification({
+            token,
+            title,
+            body,
+            data: {
+              type: 'property_approval',
+              kostId: String(kost.id),
+              receiverId: String(kost.ownerId),
+            },
+          });
+        }
+      } catch {
+        // Abaikan jika push gagal
+      }
+    }
+
+    return saved;
   }
 
   async update(id: number, dto: UpdateKostDto): Promise<Kost> {

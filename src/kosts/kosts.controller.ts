@@ -20,7 +20,15 @@ import { KostsService } from './kosts.service';
 import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
 import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
+import { verifyAuthToken } from '../auth/jwt.util';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+
+function extractOptionalViewerId(req: Request): number | undefined {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return undefined;
+  const payload = verifyAuthToken(auth.slice(7).trim());
+  return payload?.userId;
+}
 
 @Controller('kosts')
 export class KostsController {
@@ -28,6 +36,7 @@ export class KostsController {
 
   @Get()
   findAll(
+    @Req() req: Request,
     @Query('search') search?: string,
     @Query('propertyCategory') propertyCategory?: string,
     @Query('type') type?: string,
@@ -60,6 +69,7 @@ export class KostsController {
       approvalStatus,
       page,
       limit,
+      viewerId: extractOptionalViewerId(req),
     });
   }
 
@@ -88,13 +98,17 @@ export class KostsController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.kostsService.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
+    return this.kostsService.findOne(id, extractOptionalViewerId(req));
   }
 
+  @UseGuards(JwtAuthGuard)
   @Patch(':id/favorite')
-  toggleFavorite(@Param('id', ParseIntPipe) id: number) {
-    return this.kostsService.toggleFavorite(id);
+  toggleFavorite(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.kostsService.toggleFavorite(id, req.user.userId);
   }
 
   @UseGuards(JwtAuthGuard)

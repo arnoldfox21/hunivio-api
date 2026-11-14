@@ -1,5 +1,14 @@
 import 'reflect-metadata';
 import 'dotenv/config';
+process.env.TZ = 'UTC';
+import { types } from 'pg';
+
+// PostgreSQL menyimpan `timestamp without time zone` (OID 1114) dalam UTC;
+// pastikan node-postgres mem-parse-nya sebagai UTC agar tidak bergeser 7 jam (WIB).
+types.setTypeParser(1114, (str: string) =>
+  new Date(str.endsWith('Z') ? str : `${str.replace(' ', 'T')}Z`),
+);
+
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';

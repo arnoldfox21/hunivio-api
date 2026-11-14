@@ -26,6 +26,6 @@ import { FirebaseNotificationService } from './firebase-notification.service';
   ],
   controllers: [ChatsController],
   providers: [ChatsService, ChatsGateway, FirebaseNotificationService],
-  exports: [ChatsService, ChatsGateway],
+  exports: [ChatsService, ChatsGateway, FirebaseNotificationService],
 })
 export class ChatsModule {}

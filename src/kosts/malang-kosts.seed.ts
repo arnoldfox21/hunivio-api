@@ -201,7 +201,6 @@ export function buildMalangDummyKosts(count = 100): Partial<Kost>[] {
 
     const rating = Number((4.4 + ((i % 6) * 0.1)).toFixed(1));
     const reviewCount = 8 + ((i * 7) % 95);
-    const totalRooms = 8 + (i % 16);
     const availableRooms = 1 + (i % 6);
 
     const roomFacilities = isExclusive
@@ -246,7 +245,6 @@ export function buildMalangDummyKosts(count = 100): Partial<Kost>[] {
       rating,
       reviewCount,
       availableRooms,
-      totalRooms,
       roomSize: roomSizes[(i - 1) % roomSizes.length],
       electricityIncluded: i % 2 === 0,
       isSinggahsini: i % 2 === 1 || isExclusive,
@@ -354,7 +352,6 @@ export function buildMalangApartmentsAndKontrakans(): Partial<Kost>[] {
       rating: Number((4.6 + (i % 4) * 0.1).toFixed(1)),
       reviewCount: 15 + (i * 5) % 60,
       availableRooms: 1 + (i % 3),
-      totalRooms: 4,
       roomSize: `${buildingArea} m²`,
       unitType,
       furnishing,
@@ -453,7 +450,6 @@ export function buildMalangApartmentsAndKontrakans(): Partial<Kost>[] {
       rating: Number((4.5 + (i % 5) * 0.1).toFixed(1)),
       reviewCount: 6 + (i * 3) % 35,
       availableRooms: 1,
-      totalRooms: 1,
       roomSize: `LB ${buildingArea}m² / LT ${landArea}m²`,
       unitType: `Rumah ${bedrooms} KT`,
       furnishing: i % 2 === 0 ? 'Semi-Furnished' : 'Unfurnished',

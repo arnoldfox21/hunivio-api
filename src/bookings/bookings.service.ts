@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -139,63 +140,106 @@ export class BookingsService {
     return qb.getMany();
   }
 
-  async updateStatus(id: number, status: string): Promise<Booking> {
-    const booking = await this.bookingRepository.findOne({ where: { id } });
-    if (!booking) {
-      throw new NotFoundException(`Booking ID ${id} tidak ditemukan`);
-    }
-    const prevStatus = (booking.status || '').toUpperCase();
-    booking.status = status.toUpperCase();
-    if (
-      booking.status === 'DISETUJUI' &&
-      booking.bookingType === 'SEWA' &&
-      booking.paymentStatus === 'BELUM_BAYAR'
-    ) {
-      booking.paymentStatus = 'MENUNGGU_PEMBAYARAN';
-    }
-    const saved = await this.bookingRepository.save(booking);
-    if (
-      booking.bookingType === 'SEWA' &&
-      booking.status === 'DITOLAK' &&
-      prevStatus !== 'DITOLAK'
-    ) {
-      await this.kostsService.incrementAvailableRoom(booking.kostId);
-    }
-    return saved;
-  }
-
-  async cancelBooking(id: number, requesterId?: number): Promise<Booking> {
+  async updateStatus(
+    id: number,
+    status: string,
+    requesterId?: number,
+    requesterRole?: string,
+  ): Promise<Booking> {
     const booking = await this.bookingRepository.findOne({ where: { id } });
     if (!booking) {
       throw new NotFoundException(`Booking ID ${id} tidak ditemukan`);
     }
     const kost = await this.kostsService.findOne(booking.kostId);
+    const role = (requesterRole || '').toUpperCase();
+    if (
+      requesterId &&
+      kost.ownerId !== requesterId &&
+      role !== 'STAFF' &&
+      role !== 'ADMINISTRATOR'
+    ) {
+      throw new ForbiddenException(
+        'Anda tidak memiliki izin mengubah status pengajuan properti ini.',
+      );
+    }
+
+    const prevStatus = (booking.status || '').toUpperCase();
+    const nextStatus = status.trim().toUpperCase();
+    const stockConsumingStatuses = ['DISETUJUI', 'APPROVED', 'AKTIF'];
+    const wasConsuming =
+      booking.bookingType === 'SEWA' &&
+      stockConsumingStatuses.includes(prevStatus);
+    const willConsume =
+      booking.bookingType === 'SEWA' &&
+      stockConsumingStatuses.includes(nextStatus);
+
+    if (!wasConsuming && willConsume && kost.availableRooms <= 0) {
+      throw new BadRequestException(
+        'Maaf, kamar pada properti ini sudah penuh.',
+      );
+    }
+
+    booking.status = nextStatus;
+    const saved = await this.bookingRepository.save(booking);
+
+    if (
+      prevStatus !== nextStatus &&
+      booking.userId &&
+      booking.userId > 0 &&
+      kost.ownerId !== booking.userId
+    ) {
+      const jenis = booking.bookingType === 'SURVEI' ? 'survei' : 'sewa';
+      let notifText = '';
+      if (nextStatus === 'DISETUJUI' || nextStatus === 'APPROVED') {
+        notifText = `Pengajuan ${jenis} Anda untuk ${kost.name} telah DISETUJUI oleh pemilik. Silakan koordinasi langkah selanjutnya melalui chat ini.`;
+      } else if (nextStatus === 'DITOLAK') {
+        notifText = `Maaf, pengajuan ${jenis} Anda untuk ${kost.name} belum dapat disetujui pemilik.`;
+      } else if (nextStatus === 'AKTIF') {
+        notifText = `Status sewa Anda di ${kost.name} kini AKTIF. Selamat menempati properti!`;
+      } else if (nextStatus === 'SELESAI') {
+        notifText = `Masa sewa Anda di ${kost.name} telah ditandai SELESAI. Terima kasih telah menggunakan HuniVio.`;
+      }
+      if (notifText) {
+        try {
+          const autoChat = await this.chatsService.createMessage({
+            kostId: booking.kostId,
+            senderId: kost.ownerId,
+            senderName: kost.ownerName || 'Pemilik Properti',
+            receiverId: booking.userId,
+            message: notifText,
+          });
+          await this.chatsGateway.notifyNewChatMessage(autoChat);
+        } catch {
+          // Jangan gagalkan update status jika notifikasi gagal
+        }
+      }
+    }
+
+    return saved;
+  }
+
+  async cancelBooking(
+    id: number,
+    requesterId?: number,
+    requesterRole?: string,
+  ): Promise<Booking> {
+    const booking = await this.bookingRepository.findOne({ where: { id } });
+    if (!booking) {
+      throw new NotFoundException(`Booking ID ${id} tidak ditemukan`);
+    }
+    const kost = await this.kostsService.findOne(booking.kostId);
+    const role = (requesterRole || '').toUpperCase();
     if (requesterId && requesterId > 0) {
       const isTenant = booking.userId === requesterId;
       const isOwner = kost.ownerId === requesterId;
-      if (!isTenant && !isOwner) {
-        throw new BadRequestException(
+      const isStaff = role === 'STAFF' || role === 'ADMINISTRATOR';
+      if (!isTenant && !isOwner && !isStaff) {
+        throw new ForbiddenException(
           'Anda tidak memiliki izin untuk membatalkan pengajuan ini.',
         );
       }
     }
     booking.status = 'DIBATALKAN';
-    return this.bookingRepository.save(booking);
-  }
-
-  async payBooking(id: number, paymentMethod?: string): Promise<Booking> {
-    const booking = await this.bookingRepository.findOne({ where: { id } });
-    if (!booking) {
-      throw new NotFoundException(`Booking ID ${id} tidak ditemukan`);
-    }
-    if (paymentMethod) {
-      booking.paymentMethod = paymentMethod;
-    }
-    if (!booking.invoiceNumber) {
-      booking.invoiceNumber = `INV-HG-${Date.now().toString().slice(-6)}`;
-    }
-    booking.paymentStatus = 'LUNAS';
-    booking.status = 'AKTIF';
     return this.bookingRepository.save(booking);
   }
 }

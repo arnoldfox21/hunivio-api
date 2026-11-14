@@ -87,4 +87,41 @@ export class FirebaseNotificationService {
       );
     }
   }
+
+  async sendGeneralNotification(params: {
+    token: string;
+    title: string;
+    body: string;
+    data?: Record<string, string>;
+  }): Promise<void> {
+    if (!this.initialized || !params.token) return;
+
+    try {
+      await getMessaging().send({
+        token: params.token,
+        notification: {
+          title: params.title,
+          body: params.body,
+        },
+        data: {
+          type: 'general',
+          ...(params.data || {}),
+        },
+        android: {
+          priority: 'high',
+          notification: {
+            channelId: 'hunivio_chat_channel',
+            sound: 'default',
+            defaultSound: true,
+            visibility: 'public',
+            priority: 'high',
+          },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Gagal mengirim notifikasi umum FCM: ${(err as Error)?.message || err}`,
+      );
+    }
+  }
 }

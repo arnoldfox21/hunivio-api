@@ -62,9 +62,6 @@ export class Kost {
   @Column({ type: 'int', default: 3 })
   availableRooms: number;
 
-  @Column({ type: 'int', default: 12 })
-  totalRooms: number;
-
   @Column({ default: '3 x 4 m' })
   roomSize: string;
 

@@ -102,10 +102,6 @@ export class CreateKostDto {
   availableRooms?: number;
 
   @IsOptional()
-  @IsInt()
-  totalRooms?: number;
-
-  @IsOptional()
   @IsString()
   roomSize?: string;
 

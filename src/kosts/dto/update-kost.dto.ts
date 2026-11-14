@@ -101,10 +101,6 @@ export class UpdateKostDto {
   availableRooms?: number;
 
   @IsOptional()
-  @IsInt()
-  totalRooms?: number;
-
-  @IsOptional()
   @IsString()
   roomSize?: string;
 

@@ -35,3 +35,9 @@ export class UpdateOwnerPostDto {
   @IsInt()
   kostId?: number | null;
 }
+
+export class CreatePostCommentDto {
+  @IsNotEmpty()
+  @IsString()
+  content: string;
+}

@@ -36,6 +36,13 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('me')
+  async getMe(@Req() req: AuthenticatedRequest) {
+    const user = await this.usersService.findOne(req.user.userId);
+    return this.usersService.sanitizeUser(user, true);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post('onboarding')
   completeOnboarding(
     @Body() dto: CompleteOnboardingDto,
@@ -107,6 +114,28 @@ export class UsersController {
       );
     }
     return this.usersService.updateFcmToken(id, fcmToken);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Patch('users/:id/ban')
+  async setBanStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('isBanned') isBanned: boolean,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const updated = await this.usersService.setBanStatus(
+      id,
+      Boolean(isBanned),
+      req.user.userId,
+    );
+    return this.usersService.sanitizeUser(updated, true);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('users/me')
+  removeSelf(@Req() req: AuthenticatedRequest) {
+    return this.usersService.remove(req.user.userId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

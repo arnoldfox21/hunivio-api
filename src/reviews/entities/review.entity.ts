@@ -37,6 +37,12 @@ export class Review {
   @Column({ type: 'text' })
   comment: string;
 
+  @Column({ type: 'text', nullable: true })
+  ownerReply: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  ownerReplyAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

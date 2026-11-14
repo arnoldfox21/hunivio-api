@@ -1,4 +1,11 @@
-import { IsString, IsOptional, IsEmail, IsInt, IsNotEmpty } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class GoogleAuthDto {
   @IsOptional()
@@ -34,6 +41,10 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  showWhatsapp?: boolean;
 
   @IsOptional()
   @IsString()
@@ -90,4 +101,8 @@ export class CompleteOnboardingDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  showWhatsapp?: boolean;
 }

@@ -26,6 +26,9 @@ export class User {
   @Column({ default: '' })
   phone: string;
 
+  @Column({ default: false })
+  showWhatsapp: boolean;
+
   @Column({ default: '' })
   username: string;
 
@@ -40,6 +43,12 @@ export class User {
 
   @Column({ default: 'PENYEWA' })
   role: string;
+
+  @Column({ default: false })
+  isBanned: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  bannedAt: Date | null;
 
   @Column({ default: true })
   onboardingCompleted: boolean;
