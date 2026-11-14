@@ -1,12 +1,20 @@
 import {
   Injectable,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
-import { GoogleAuthDto, UpdateUserDto } from './dto/google-auth.dto';
+import {
+  GoogleAuthDto,
+  UpdateUserDto,
+  UpdateUserRoleDto,
+  CompleteOnboardingDto,
+} from './dto/google-auth.dto';
+import { signAuthToken } from '../auth/jwt.util';
 
 export const GOOGLE_OAUTH_CONFIG = {
   clientId:
@@ -24,22 +32,50 @@ export class UsersService {
     private readonly userRepository: Repository<User>,
   ) {}
 
+  sanitizeUser(user: User, includePrivate = false) {
+    const base = {
+      id: user.id,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      username: user.username,
+      bio: user.bio,
+      city: user.city,
+      coverUrl: user.coverUrl,
+      role: user.role,
+      onboardingCompleted: user.onboardingCompleted ?? true,
+      preferredCategory: user.preferredCategory ?? '',
+      lastLoginAt: user.lastLoginAt,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+    if (!includePrivate) {
+      return base;
+    }
+    return {
+      ...base,
+      email: user.email,
+      phone: user.phone,
+    };
+  }
+
   async loginOrRegisterWithGoogle(dto: GoogleAuthDto): Promise<{
-    user: User;
+    user: ReturnType<UsersService['sanitizeUser']>;
+    accessToken: string;
     isNewUser: boolean;
   }> {
-    let googleId = dto.googleId?.trim();
-    let email = dto.email?.trim().toLowerCase();
+    let googleId: string | undefined;
+    let email: string | undefined;
     let name = dto.name?.trim();
     let avatarUrl = dto.avatarUrl?.trim();
+    let verifiedWithGoogle = false;
 
-    // If accessToken is provided, optionally verify/enrich against Google userinfo endpoint
     if (dto.accessToken) {
       try {
         const res = await fetch(
           'https://www.googleapis.com/oauth2/v3/userinfo',
           {
             headers: { Authorization: `Bearer ${dto.accessToken}` },
+            signal: AbortSignal.timeout(4000),
           },
         );
         if (res.ok) {
@@ -49,21 +85,22 @@ export class UsersService {
             name?: string;
             picture?: string;
           };
-          if (info.sub) googleId = info.sub;
-          if (info.email) email = info.email.toLowerCase();
-          if (info.name) name = info.name;
-          if (info.picture) avatarUrl = info.picture;
+          if (info.sub && info.email) {
+            googleId = info.sub;
+            email = info.email.toLowerCase();
+            if (info.name) name = info.name;
+            if (info.picture) avatarUrl = info.picture;
+            verifiedWithGoogle = true;
+          }
         }
-      } catch (_) {
-        // Fallback to client-provided GoogleSignInAccount fields if offline/restricted
-      }
+      } catch (_) {}
     }
 
-    // If idToken is provided, optionally verify/enrich against Google tokeninfo endpoint
-    if (dto.idToken) {
+    if (!verifiedWithGoogle && dto.idToken) {
       try {
         const res = await fetch(
           `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(dto.idToken)}`,
+          { signal: AbortSignal.timeout(4000) },
         );
         if (res.ok) {
           const info = (await res.json()) as {
@@ -72,17 +109,20 @@ export class UsersService {
             name?: string;
             picture?: string;
           };
-          if (info.sub) googleId = info.sub;
-          if (info.email) email = info.email.toLowerCase();
-          if (info.name) name = info.name;
-          if (info.picture) avatarUrl = info.picture;
+          if (info.sub && info.email) {
+            googleId = info.sub;
+            email = info.email.toLowerCase();
+            if (info.name) name = info.name;
+            if (info.picture) avatarUrl = info.picture;
+            verifiedWithGoogle = true;
+          }
         }
       } catch (_) {}
     }
 
-    if (!email || !googleId) {
-      throw new BadRequestException(
-        'Data akun Google (googleId dan email) wajib diisi',
+    if (!verifiedWithGoogle || !email || !googleId) {
+      throw new UnauthorizedException(
+        'Verifikasi akun Google gagal. Pastikan token Google valid.',
       );
     }
 
@@ -103,6 +143,7 @@ export class UsersService {
         email,
         name: displayName,
         avatarUrl: resolvedAvatarUrl,
+        onboardingCompleted: false,
         lastLoginAt: new Date(),
       });
     } else {
@@ -111,20 +152,32 @@ export class UsersService {
       if (!user.name || user.name.trim().length === 0) {
         user.name = displayName;
       }
-      // Simpan foto profil jika sebelumnya masih kosong, atau perbarui jika mendapat foto asli Google
-      if (
-        !user.avatarUrl ||
-        user.avatarUrl.trim().length === 0 ||
-        (avatarUrl && avatarUrl.includes('googleusercontent.com'))
-      ) {
+      // Simpan foto profil jika sebelumnya masih kosong / placeholder, atau perbarui jika mendapat foto asli Google
+      const hasCustomAvatar =
+        user.avatarUrl &&
+        user.avatarUrl.trim().length > 0 &&
+        !user.avatarUrl.includes('ui-avatars.com');
+      if (!hasCustomAvatar && resolvedAvatarUrl) {
         user.avatarUrl = resolvedAvatarUrl;
+      } else if (
+        avatarUrl &&
+        avatarUrl.includes('googleusercontent.com') &&
+        (!user.avatarUrl || user.avatarUrl.includes('googleusercontent.com'))
+      ) {
+        user.avatarUrl = avatarUrl;
       }
       user.lastLoginAt = new Date();
     }
 
     const saved = await this.userRepository.save(user);
+    const accessToken = signAuthToken({
+      userId: saved.id,
+      role: saved.role,
+      email: saved.email,
+    });
     return {
-      user: saved,
+      user: this.sanitizeUser(saved, true),
+      accessToken,
       isNewUser,
     };
   }
@@ -152,7 +205,12 @@ export class UsersService {
       user.phone = dto.phone.trim();
     }
     if (dto.role !== undefined && dto.role.trim().length > 0) {
-      user.role = dto.role.trim().toUpperCase();
+      const requestedRole = dto.role.trim().toUpperCase();
+      if (requestedRole !== (user.role || '').toUpperCase()) {
+        throw new ForbiddenException(
+          'Peran pengguna tidak dapat diubah sendiri. Hubungi Staff/Admin.',
+        );
+      }
     }
     if (dto.username !== undefined) {
       user.username = dto.username.trim().replace(/^@+/, '');
@@ -169,7 +227,112 @@ export class UsersService {
     if (dto.coverUrl !== undefined) {
       user.coverUrl = dto.coverUrl.trim();
     }
+    if (dto.fcmToken !== undefined) {
+      user.fcmToken = dto.fcmToken.trim();
+    }
     return this.userRepository.save(user);
+  }
+
+  async updateUserRole(id: number, dto: UpdateUserRoleDto): Promise<User> {
+    const requester = await this.userRepository.findOne({
+      where: { id: dto.requesterId },
+    });
+    const requesterRole = (requester?.role || '').toUpperCase();
+    if (
+      !requester ||
+      (requesterRole !== 'STAFF' && requesterRole !== 'ADMINISTRATOR')
+    ) {
+      throw new ForbiddenException(
+        'Hanya Staff atau Administrator yang dapat mengubah peran pengguna.',
+      );
+    }
+
+    if (id === 1) {
+      throw new ForbiddenException(
+        'Peran Administrator utama tidak dapat diubah.',
+      );
+    }
+
+    const user = await this.findOne(id);
+    const normalizedRole = dto.role.trim().toUpperCase();
+    const allowedRoles = ['PENYEWA', 'PEMILIK_KOST', 'STAFF', 'ADMINISTRATOR'];
+    if (!allowedRoles.includes(normalizedRole)) {
+      throw new BadRequestException('Peran pengguna tidak valid.');
+    }
+
+    user.role = normalizedRole;
+    return this.userRepository.save(user);
+  }
+
+  async completeOnboarding(
+    userId: number,
+    dto: CompleteOnboardingDto,
+  ): Promise<{
+    user: ReturnType<UsersService['sanitizeUser']>;
+    accessToken: string;
+  }> {
+    const user = await this.findOne(userId);
+    if (user.onboardingCompleted) {
+      throw new ForbiddenException(
+        'Onboarding sudah selesai. Peran tidak dapat diubah lagi melalui langkah ini.',
+      );
+    }
+
+    const normalizedRole = dto.role.trim().toUpperCase();
+    if (normalizedRole !== 'PENYEWA' && normalizedRole !== 'PEMILIK_KOST') {
+      throw new BadRequestException(
+        'Pilih peran sebagai Penyewa atau Pemilik Properti.',
+      );
+    }
+
+    user.role = normalizedRole;
+    if (dto.preferredCategory !== undefined) {
+      user.preferredCategory = dto.preferredCategory.trim();
+    }
+    if (dto.city !== undefined && dto.city.trim().length > 0) {
+      user.city = dto.city.trim();
+    }
+    if (dto.phone !== undefined && dto.phone.trim().length > 0) {
+      user.phone = dto.phone.trim();
+    }
+    user.onboardingCompleted = true;
+
+    const saved = await this.userRepository.save(user);
+    const accessToken = signAuthToken({
+      userId: saved.id,
+      role: saved.role,
+      email: saved.email,
+    });
+
+    return {
+      user: this.sanitizeUser(saved, true),
+      accessToken,
+    };
+  }
+
+  async updateFcmToken(
+    id: number,
+    fcmToken: string,
+  ): Promise<{ updated: boolean }> {
+    const user = await this.findOne(id);
+    const trimmed = (fcmToken || '').trim();
+    if (trimmed.length > 0) {
+      await this.userRepository
+        .createQueryBuilder()
+        .update(User)
+        .set({ fcmToken: '' })
+        .where('fcmToken = :token AND id != :id', { token: trimmed, id })
+        .execute();
+    }
+    user.fcmToken = trimmed;
+    await this.userRepository.save(user);
+    return { updated: true };
+  }
+
+  async getFcmToken(id: number): Promise<string | null> {
+    const user = await this.userRepository.findOne({ where: { id } });
+    const token = user?.fcmToken?.trim();
+    return token && token.length > 0 ? token : null;
   }
 
   async remove(id: number): Promise<{ deleted: boolean; id: number }> {

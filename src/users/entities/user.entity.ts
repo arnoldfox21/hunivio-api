@@ -41,6 +41,15 @@ export class User {
   @Column({ default: 'PENYEWA' })
   role: string;
 
+  @Column({ default: true })
+  onboardingCompleted: boolean;
+
+  @Column({ type: 'varchar', length: 64, default: '' })
+  preferredCategory: string;
+
+  @Column({ type: 'text', default: '' })
+  fcmToken: string;
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   lastLoginAt: Date;
 

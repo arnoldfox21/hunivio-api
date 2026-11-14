@@ -11,6 +11,10 @@ export class CreateKostDto {
   @IsString()
   name: string;
 
+  @IsOptional()
+  @IsString()
+  propertyCategory?: string;
+
   @IsString()
   type: string;
 
@@ -28,6 +32,54 @@ export class CreateKostDto {
 
   @IsInt()
   pricePerMonth: number;
+
+  @IsOptional()
+  @IsInt()
+  pricePerDay?: number;
+
+  @IsOptional()
+  @IsInt()
+  pricePerYear?: number;
+
+  @IsOptional()
+  @IsInt()
+  depositAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  unitType?: string;
+
+  @IsOptional()
+  @IsString()
+  furnishing?: string;
+
+  @IsOptional()
+  @IsInt()
+  floorLevel?: number;
+
+  @IsOptional()
+  @IsInt()
+  buildingArea?: number;
+
+  @IsOptional()
+  @IsInt()
+  landArea?: number;
+
+  @IsOptional()
+  @IsInt()
+  bedrooms?: number;
+
+  @IsOptional()
+  @IsInt()
+  bathrooms?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  hasCarport?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isVerified?: boolean;
 
   @IsOptional()
   @IsInt()
@@ -92,6 +144,10 @@ export class CreateKostDto {
   @IsOptional()
   @IsString()
   ownerPhone?: string;
+
+  @IsOptional()
+  @IsInt()
+  ownerId?: number;
 
   @IsOptional()
   @IsString()

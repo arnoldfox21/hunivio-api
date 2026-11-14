@@ -17,8 +17,11 @@ export class Kost {
   @Column({ unique: true })
   slug: string;
 
+  @Column({ default: 'KOST' })
+  propertyCategory: string; // 'KOST' | 'APARTEMEN' | 'KONTRAKAN'
+
   @Column({ default: 'Campur' })
-  type: string; // 'Putra' | 'Putri' | 'Campur'
+  type: string; // 'Putra' | 'Putri' | 'Campur' | 'Umum'
 
   @Column()
   city: string;
@@ -34,6 +37,15 @@ export class Kost {
 
   @Column({ type: 'int' })
   pricePerMonth: number;
+
+  @Column({ type: 'int', nullable: true })
+  pricePerDay: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  pricePerYear: number | null;
+
+  @Column({ type: 'int', default: 0 })
+  depositAmount: number;
 
   @Column({ type: 'int', nullable: true })
   originalPrice: number;
@@ -55,6 +67,33 @@ export class Kost {
 
   @Column({ default: '3 x 4 m' })
   roomSize: string;
+
+  @Column({ default: '' })
+  unitType: string; // e.g., 'Studio', '1BR', '2BR', 'Rumah 2 Lantai'
+
+  @Column({ default: '' })
+  furnishing: string; // 'Furnished' | 'Semi-Furnished' | 'Unfurnished'
+
+  @Column({ type: 'int', nullable: true })
+  floorLevel: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  buildingArea: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  landArea: number | null;
+
+  @Column({ type: 'int', default: 1 })
+  bedrooms: number;
+
+  @Column({ type: 'int', default: 1 })
+  bathrooms: number;
+
+  @Column({ default: false })
+  hasCarport: boolean;
+
+  @Column({ default: true })
+  isVerified: boolean;
 
   @Column({ default: false })
   electricityIncluded: boolean;
@@ -83,6 +122,9 @@ export class Kost {
   @Column({ default: '6281234567890' })
   ownerPhone: string;
 
+  @Column({ type: 'int', default: 1 })
+  ownerId: number;
+
   @Column({ default: '' })
   nearbyLandmark: string;
 
@@ -94,6 +136,12 @@ export class Kost {
 
   @Column({ default: false })
   isFavorite: boolean;
+
+  @Column({ default: 'APPROVED' })
+  approvalStatus: string; // 'PENDING' | 'APPROVED' | 'REJECTED'
+
+  @Column({ type: 'text', default: '' })
+  rejectionReason: string;
 
   @CreateDateColumn()
   createdAt: Date;

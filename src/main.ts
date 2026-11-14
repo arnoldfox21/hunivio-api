@@ -7,6 +7,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import * as express from 'express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -19,6 +20,11 @@ async function bootstrap() {
     }
   }
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.use(express.json({ limit: '15mb' }));
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
@@ -28,8 +34,9 @@ async function bootstrap() {
   }
   app.useStaticAssets(uploadsDir, { prefix: '/uploads/' });
 
+  const corsOrigin = process.env.CORS_ORIGIN?.trim();
   app.enableCors({
-    origin: '*',
+    origin: corsOrigin ? corsOrigin.split(',').map((o) => o.trim()) : '*',
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   });
   app.setGlobalPrefix('api');
@@ -42,6 +49,6 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3001;
   await app.listen(port, '0.0.0.0');
-  console.log(`🚀 HuniGo NestJS API running on http://0.0.0.0:${port}/api`);
+  console.log(`🚀 HuniVio NestJS API running on http://0.0.0.0:${port}/api`);
 }
 bootstrap();

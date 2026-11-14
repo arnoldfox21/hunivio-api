@@ -18,6 +18,22 @@ export class CreateBookingDto {
   durationMonths: number;
 
   @IsOptional()
+  @IsInt()
+  userId?: number;
+
+  @IsOptional()
+  @IsString()
+  bookingType?: string;
+
+  @IsOptional()
+  @IsString()
+  surveyDateTime?: string;
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
+
+  @IsOptional()
   @IsString()
   notes?: string;
 }

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEmail } from 'class-validator';
+import { IsString, IsOptional, IsEmail, IsInt, IsNotEmpty } from 'class-validator';
 
 export class GoogleAuthDto {
   @IsOptional()
@@ -58,4 +58,36 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   coverUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  fcmToken?: string;
+}
+
+export class UpdateUserRoleDto {
+  @IsNotEmpty()
+  @IsString()
+  role: string;
+
+  @IsNotEmpty()
+  @IsInt()
+  requesterId: number;
+}
+
+export class CompleteOnboardingDto {
+  @IsNotEmpty()
+  @IsString()
+  role: string;
+
+  @IsOptional()
+  @IsString()
+  preferredCategory?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
 }

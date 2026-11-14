@@ -7,9 +7,19 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  UseGuards,
+  Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { UsersService, GOOGLE_OAUTH_CONFIG } from './users.service';
-import { GoogleAuthDto, UpdateUserDto } from './dto/google-auth.dto';
+import {
+  GoogleAuthDto,
+  UpdateUserDto,
+  UpdateUserRoleDto,
+  CompleteOnboardingDto,
+} from './dto/google-auth.dto';
+import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
+import { Roles, RolesGuard } from '../auth/roles.guard';
 
 @Controller('auth')
 export class UsersController {
@@ -25,24 +35,82 @@ export class UsersController {
     return this.usersService.loginOrRegisterWithGoogle(dto);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post('onboarding')
+  completeOnboarding(
+    @Body() dto: CompleteOnboardingDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.usersService.completeOnboarding(req.user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
   @Get('users')
-  findAll() {
-    return this.usersService.findAll();
+  async findAll() {
+    const users = await this.usersService.findAll();
+    return users.map((u) => this.usersService.sanitizeUser(u, true));
   }
 
   @Get('users/:id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.usersService.findOne(id);
+  async findOne(@Param('id', ParseIntPipe) id: number) {
+    const user = await this.usersService.findOne(id);
+    return this.usersService.sanitizeUser(user, false);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Patch('users/:id')
-  updateProfile(
+  async updateProfile(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateUserDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.usersService.updateProfile(id, dto);
+    const role = (req.user.role || '').toUpperCase();
+    if (
+      req.user.userId !== id &&
+      role !== 'STAFF' &&
+      role !== 'ADMINISTRATOR'
+    ) {
+      throw new ForbiddenException(
+        'Anda tidak memiliki izin mengubah profil pengguna lain.',
+      );
+    }
+    const updated = await this.usersService.updateProfile(id, dto);
+    return this.usersService.sanitizeUser(updated, true);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Patch('users/:id/role')
+  async updateRole(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateUserRoleDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const updated = await this.usersService.updateUserRole(id, {
+      ...dto,
+      requesterId: req.user.userId,
+    });
+    return this.usersService.sanitizeUser(updated, true);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('users/:id/fcm-token')
+  updateFcmToken(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('fcmToken') fcmToken: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (req.user.userId !== id) {
+      throw new ForbiddenException(
+        'Anda tidak dapat mengubah FCM token milik pengguna lain.',
+      );
+    }
+    return this.usersService.updateFcmToken(id, fcmToken);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
   @Delete('users/:id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.usersService.remove(id);
