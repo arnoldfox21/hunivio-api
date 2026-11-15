@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  MinLength,
 } from 'class-validator';
 
 export class GoogleAuthDto {
@@ -105,4 +106,25 @@ export class CompleteOnboardingDto {
   @IsOptional()
   @IsBoolean()
   showWhatsapp?: boolean;
+}
+
+export class EmailLoginDto {
+  @IsNotEmpty()
+  @IsEmail()
+  email: string;
+
+  @IsNotEmpty()
+  @IsString()
+  password: string;
+}
+
+export class SetPasswordDto {
+  @IsOptional()
+  @IsString()
+  currentPassword?: string;
+
+  @IsNotEmpty()
+  @IsString()
+  @MinLength(6, { message: 'Password minimal 6 karakter.' })
+  newPassword: string;
 }

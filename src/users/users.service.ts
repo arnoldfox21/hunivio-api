@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import {
   Injectable,
   BadRequestException,
@@ -13,6 +14,8 @@ import {
   UpdateUserDto,
   UpdateUserRoleDto,
   CompleteOnboardingDto,
+  EmailLoginDto,
+  SetPasswordDto,
 } from './dto/google-auth.dto';
 import { signAuthToken } from '../auth/jwt.util';
 
@@ -64,6 +67,87 @@ export class UsersService {
       ...base,
       email: user.email,
       phone: user.phone,
+      hasPassword: Boolean(user.passwordHash),
+    };
+  }
+
+  private _hashPassword(password: string): string {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const derived = crypto.scryptSync(password, salt, 64).toString('hex');
+    return `${salt}:${derived}`;
+  }
+
+  private _verifyPassword(password: string, storedHash: string): boolean {
+    const parts = storedHash.split(':');
+    if (parts.length !== 2) return false;
+    const [salt, keyHex] = parts;
+    const keyBuf = Buffer.from(keyHex, 'hex');
+    const derivedBuf = crypto.scryptSync(password, salt, 64);
+    if (keyBuf.length !== derivedBuf.length) return false;
+    return crypto.timingSafeEqual(keyBuf, derivedBuf);
+  }
+
+  async loginWithEmail(dto: EmailLoginDto): Promise<{
+    user: ReturnType<UsersService['sanitizeUser']>;
+    accessToken: string;
+    isNewUser: boolean;
+  }> {
+    const email = dto.email.trim().toLowerCase();
+    const user = await this.userRepository.findOne({ where: { email } });
+    if (!user) {
+      throw new UnauthorizedException('Email atau password salah.');
+    }
+    if (!user.passwordHash) {
+      throw new UnauthorizedException(
+        'Akun ini belum mengatur password. Silakan masuk dengan Google lalu atur password di menu Keamanan Akun.',
+      );
+    }
+    if (!this._verifyPassword(dto.password, user.passwordHash)) {
+      throw new UnauthorizedException('Email atau password salah.');
+    }
+    if (user.isBanned) {
+      throw new ForbiddenException(
+        'Akun Anda sedang ditangguhkan oleh administrator.',
+      );
+    }
+    user.lastLoginAt = new Date();
+    const saved = await this.userRepository.save(user);
+    const accessToken = signAuthToken({
+      userId: saved.id,
+      role: saved.role,
+      email: saved.email,
+    });
+    return {
+      user: this.sanitizeUser(saved, true),
+      accessToken,
+      isNewUser: false,
+    };
+  }
+
+  async setOrChangePassword(
+    userId: number,
+    dto: SetPasswordDto,
+  ): Promise<{
+    user: ReturnType<UsersService['sanitizeUser']>;
+    message: string;
+  }> {
+    const user = await this.findOne(userId);
+    const hadPassword = Boolean(user.passwordHash);
+    if (hadPassword) {
+      if (
+        !dto.currentPassword ||
+        !this._verifyPassword(dto.currentPassword, user.passwordHash!)
+      ) {
+        throw new UnauthorizedException('Password saat ini tidak sesuai.');
+      }
+    }
+    user.passwordHash = this._hashPassword(dto.newPassword);
+    const saved = await this.userRepository.save(user);
+    return {
+      user: this.sanitizeUser(saved, true),
+      message: hadPassword
+        ? 'Password berhasil diperbarui.'
+        : 'Password berhasil diatur. Anda kini dapat login dengan email.',
     };
   }
 

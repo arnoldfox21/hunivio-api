@@ -17,6 +17,8 @@ import {
   UpdateUserDto,
   UpdateUserRoleDto,
   CompleteOnboardingDto,
+  EmailLoginDto,
+  SetPasswordDto,
 } from './dto/google-auth.dto';
 import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
@@ -33,6 +35,20 @@ export class UsersController {
   @Post('google')
   loginOrRegisterWithGoogle(@Body() dto: GoogleAuthDto) {
     return this.usersService.loginOrRegisterWithGoogle(dto);
+  }
+
+  @Post('login')
+  loginWithEmail(@Body() dto: EmailLoginDto) {
+    return this.usersService.loginWithEmail(dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('password')
+  setOrChangePassword(
+    @Body() dto: SetPasswordDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.usersService.setOrChangePassword(req.user.userId, dto);
   }
 
   @UseGuards(JwtAuthGuard)
