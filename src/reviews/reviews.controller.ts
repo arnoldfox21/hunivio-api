@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -21,6 +22,20 @@ export class ReviewsController {
   @Get()
   findByKost(@Query('kostId', ParseIntPipe) kostId: number) {
     return this.reviewsService.findByKost(kostId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Get('reports')
+  findOpenReports() {
+    return this.reviewsService.findOpenReports();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Patch('reports/:reportId/dismiss')
+  dismissReport(@Param('reportId', ParseIntPipe) reportId: number) {
+    return this.reviewsService.dismissReport(reportId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -56,5 +71,27 @@ export class ReviewsController {
       req.user.role,
       reply,
     );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/report')
+  report(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { reason: string; details?: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.reviewsService.reportReview(
+      id,
+      req.user.userId,
+      body?.reason,
+      body?.details,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Delete(':id')
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.reviewsService.deleteReview(id);
   }
 }

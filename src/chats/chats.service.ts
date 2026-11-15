@@ -10,7 +10,6 @@ import { ChatMessage } from './entities/chat-message.entity';
 import { KostGroupMessage } from './entities/kost-group-message.entity';
 import { KostGroupSetting } from './entities/kost-group-setting.entity';
 import { Kost } from '../kosts/entities/kost.entity';
-import { Booking } from '../bookings/entities/booking.entity';
 import { User } from '../users/entities/user.entity';
 
 @Injectable()
@@ -24,8 +23,6 @@ export class ChatsService {
     private readonly groupSettingRepository: Repository<KostGroupSetting>,
     @InjectRepository(Kost)
     private readonly kostRepository: Repository<Kost>,
-    @InjectRepository(Booking)
-    private readonly bookingRepository: Repository<Booking>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
@@ -237,21 +234,9 @@ export class ChatsService {
       return { kost, role: 'MEMBER', setting };
     }
 
-    const activeBooking = await this.bookingRepository.findOne({
-      where: {
-        kostId,
-        userId,
-        bookingType: 'SEWA',
-        status: In(['DISETUJUI', 'APPROVED', 'AKTIF']),
-      },
-    });
-    if (!activeBooking) {
-      throw new ForbiddenException(
-        'Hanya penghuni dengan sewa disetujui/aktif dan pemilik properti yang dapat mengakses grup ini.',
-      );
-    }
-
-    return { kost, role: 'MEMBER', setting };
+    throw new ForbiddenException(
+      'Hanya anggota grup yang ditambahkan pemilik properti yang dapat mengakses grup ini.',
+    );
   }
 
   async getGroupMembers(kostId: number): Promise<
@@ -269,20 +254,7 @@ export class ChatsService {
       (setting.removedUserIds || []).filter((id) => id !== ''),
     );
 
-    const bookings = await this.bookingRepository.find({
-      where: {
-        kostId,
-        bookingType: 'SEWA',
-        status: In(['DISETUJUI', 'APPROVED', 'AKTIF']),
-      },
-    });
-
     const memberIds = new Set<number>([kost.ownerId]);
-    for (const b of bookings) {
-      if (b.userId > 0 && !removedSet.has(String(b.userId))) {
-        memberIds.add(b.userId);
-      }
-    }
     for (const rawId of setting.addedUserIds || []) {
       const uid = parseInt(rawId, 10);
       if (!isNaN(uid) && uid > 0 && !removedSet.has(String(uid))) {
@@ -313,10 +285,9 @@ export class ChatsService {
     for (const uid of memberIds) {
       if (uid === kost.ownerId) continue;
       const u = userMap.get(uid);
-      const bookingMatch = bookings.find((b) => b.userId === uid);
       members.push({
         userId: uid,
-        name: u?.name || bookingMatch?.tenantName || 'Penghuni',
+        name: u?.name || 'Penghuni',
         avatarUrl: u?.avatarUrl || '',
         role: 'MEMBER',
       });
@@ -333,18 +304,7 @@ export class ChatsService {
       order: { id: 'ASC' },
     });
 
-    const activeBookings = await this.bookingRepository.find({
-      where: {
-        userId,
-        bookingType: 'SEWA',
-        status: In(['DISETUJUI', 'APPROVED', 'AKTIF']),
-      },
-    });
-
     const kostIds = new Set<number>(ownedKosts.map((k) => k.id));
-    for (const b of activeBookings) {
-      kostIds.add(b.kostId);
-    }
     const allSettings = await this.groupSettingRepository.find();
     for (const s of allSettings) {
       const added = (s.addedUserIds || []).filter((x) => x !== '');
@@ -357,40 +317,23 @@ export class ChatsService {
     if (kostIds.size === 0) return [];
 
     const kostIdList = Array.from(kostIds);
-    const [allKosts, settingsList, allGroupBookings, latestGroupMsgs] =
-      await Promise.all([
-        this.kostRepository.find({ where: { id: In(kostIdList) } }),
-        this.groupSettingRepository.find({ where: { kostId: In(kostIdList) } }),
-        this.bookingRepository.find({
-          where: {
-            kostId: In(kostIdList),
-            bookingType: 'SEWA',
-            status: In(['DISETUJUI', 'APPROVED', 'AKTIF']),
-          },
-        }),
-        this.groupMsgRepository
-          .createQueryBuilder('msg')
-          .where('msg.kostId IN (:...ids) AND msg.isDeleted = false', {
-            ids: kostIdList,
-          })
-          .orderBy('msg.kostId', 'ASC')
-          .addOrderBy('msg.createdAt', 'DESC')
-          .addOrderBy('msg.id', 'DESC')
-          .distinctOn(['msg.kostId'])
-          .getMany(),
-      ]);
+    const [allKosts, settingsList, latestGroupMsgs] = await Promise.all([
+      this.kostRepository.find({ where: { id: In(kostIdList) } }),
+      this.groupSettingRepository.find({ where: { kostId: In(kostIdList) } }),
+      this.groupMsgRepository
+        .createQueryBuilder('msg')
+        .where('msg.kostId IN (:...ids) AND msg.isDeleted = false', {
+          ids: kostIdList,
+        })
+        .orderBy('msg.kostId', 'ASC')
+        .addOrderBy('msg.createdAt', 'DESC')
+        .addOrderBy('msg.id', 'DESC')
+        .distinctOn(['msg.kostId'])
+        .getMany(),
+    ]);
 
     const settingMap = new Map(settingsList.map((s) => [s.kostId, s]));
     const lastMsgMap = new Map(latestGroupMsgs.map((m) => [m.kostId, m]));
-    const bookingUsersByKost = new Map<number, Set<number>>();
-    for (const b of allGroupBookings) {
-      if (b.userId > 0) {
-        if (!bookingUsersByKost.has(b.kostId)) {
-          bookingUsersByKost.set(b.kostId, new Set());
-        }
-        bookingUsersByKost.get(b.kostId)!.add(b.userId);
-      }
-    }
 
     const rooms: Array<Record<string, any>> = [];
     for (const kost of allKosts) {
@@ -403,12 +346,6 @@ export class ChatsService {
       }
 
       const memberIds = new Set<number>([kost.ownerId]);
-      const bookedUsers = bookingUsersByKost.get(kost.id);
-      if (bookedUsers) {
-        for (const uid of bookedUsers) {
-          if (!removedSet.has(String(uid))) memberIds.add(uid);
-        }
-      }
       for (const rawId of setting?.addedUserIds || []) {
         const uid = parseInt(rawId, 10);
         if (!isNaN(uid) && uid > 0 && !removedSet.has(String(uid))) {

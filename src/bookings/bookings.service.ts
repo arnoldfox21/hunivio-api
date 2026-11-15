@@ -31,16 +31,11 @@ export class BookingsService {
     }
     if (dto.userId && dto.userId > 0 && kost.ownerId === dto.userId) {
       throw new BadRequestException(
-        'Anda tidak dapat mengajukan sewa atau survei pada properti milik sendiri.',
+        'Anda tidak dapat mengajukan survei pada properti milik sendiri.',
       );
     }
-    const isSurvey = (dto.bookingType || 'SEWA').toUpperCase() === 'SURVEI';
-    if (!isSurvey && kost.availableRooms <= 0) {
-      throw new BadRequestException(
-        'Maaf, kamar pada properti ini sudah penuh.',
-      );
-    }
-    const type = isSurvey ? 'SURVEI' : 'SEWA';
+    const type = 'SURVEI';
+    const isSurvey = true;
 
     // Cegah pengajuan ganda pada properti yang sama jika masih dalam proses / aktif
     const ongoingStatuses = [
@@ -74,16 +69,10 @@ export class BookingsService {
       }
     }
 
-    const totalPrice = isSurvey ? 0 : kost.pricePerMonth * dto.durationMonths;
-
     const booking = this.bookingRepository.create({
       ...dto,
-      bookingType: isSurvey ? 'SURVEI' : 'SEWA',
-      surveyDateTime: dto.surveyDateTime || '',
-      paymentMethod: 'LUAR_APP',
-      paymentStatus: 'LUAR_APP',
-      invoiceNumber: '',
-      totalPrice,
+      bookingType: type,
+      surveyDateTime: dto.surveyDateTime || dto.startDate,
       status: 'TERKIRIM',
     });
 
@@ -94,9 +83,7 @@ export class BookingsService {
       const notesLine = dto.notes?.trim()
         ? `\nCatatan: ${dto.notes.trim()}`
         : '';
-      const autoMessage = isSurvey
-        ? `Halo, saya ${dto.tenantName} (${dto.tenantPhone}) mengajukan jadwal SURVEI untuk ${kost.name} pada ${dto.surveyDateTime || dto.startDate}.${notesLine}`
-        : `Halo, saya ${dto.tenantName} (${dto.tenantPhone}) mengajukan SEWA untuk ${kost.name} mulai ${dto.startDate} selama ${dto.durationMonths} bulan (estimasi Rp ${totalPrice.toLocaleString('id-ID')}). Mohon info lanjutannya ya.${notesLine}`;
+      const autoMessage = `Halo, saya ${dto.tenantName} (${dto.tenantPhone}) mengajukan jadwal SURVEI untuk ${kost.name} pada ${dto.surveyDateTime || dto.startDate}.${notesLine}`;
       try {
         const autoChat = await this.chatsService.createMessage({
           kostId: dto.kostId,
@@ -165,19 +152,6 @@ export class BookingsService {
 
     const prevStatus = (booking.status || '').toUpperCase();
     const nextStatus = status.trim().toUpperCase();
-    const stockConsumingStatuses = ['DISETUJUI', 'APPROVED', 'AKTIF'];
-    const wasConsuming =
-      booking.bookingType === 'SEWA' &&
-      stockConsumingStatuses.includes(prevStatus);
-    const willConsume =
-      booking.bookingType === 'SEWA' &&
-      stockConsumingStatuses.includes(nextStatus);
-
-    if (!wasConsuming && willConsume && kost.availableRooms <= 0) {
-      throw new BadRequestException(
-        'Maaf, kamar pada properti ini sudah penuh.',
-      );
-    }
 
     booking.status = nextStatus;
     const saved = await this.bookingRepository.save(booking);

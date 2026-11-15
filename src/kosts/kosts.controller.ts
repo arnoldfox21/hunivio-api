@@ -39,6 +39,7 @@ export class KostsController {
     @Req() req: Request,
     @Query('search') search?: string,
     @Query('propertyCategory') propertyCategory?: string,
+    @Query('unitType') unitType?: string,
     @Query('type') type?: string,
     @Query('city') city?: string,
     @Query('facility') facility?: string,
@@ -56,6 +57,7 @@ export class KostsController {
     return this.kostsService.findAll({
       search,
       propertyCategory,
+      unitType,
       type,
       city,
       facility,
@@ -76,10 +78,16 @@ export class KostsController {
   @Get('map-points')
   getMapPoints(
     @Query('propertyCategory') propertyCategory?: string,
+    @Query('unitType') unitType?: string,
     @Query('type') type?: string,
     @Query('city') city?: string,
   ) {
-    return this.kostsService.getMapPoints({ propertyCategory, type, city });
+    return this.kostsService.getMapPoints({
+      propertyCategory,
+      unitType,
+      type,
+      city,
+    });
   }
 
   @Get('cities')

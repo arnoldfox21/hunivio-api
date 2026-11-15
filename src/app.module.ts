@@ -10,6 +10,7 @@ import { ChatMessage } from './chats/entities/chat-message.entity';
 import { KostGroupMessage } from './chats/entities/kost-group-message.entity';
 import { KostGroupSetting } from './chats/entities/kost-group-setting.entity';
 import { Review } from './reviews/entities/review.entity';
+import { ReviewReport } from './reviews/entities/review-report.entity';
 import { OwnerPost } from './posts/entities/owner-post.entity';
 import { OwnerPostComment } from './posts/entities/owner-post-comment.entity';
 import { OwnerPostLike } from './posts/entities/owner-post-like.entity';
@@ -43,6 +44,7 @@ import { LocationsModule } from './locations/locations.module';
               KostGroupMessage,
               KostGroupSetting,
               Review,
+              ReviewReport,
               OwnerPost,
               OwnerPostComment,
               OwnerPostLike,
@@ -67,6 +69,7 @@ import { LocationsModule } from './locations/locations.module';
               KostGroupMessage,
               KostGroupSetting,
               Review,
+              ReviewReport,
               OwnerPost,
               OwnerPostComment,
               OwnerPostLike,

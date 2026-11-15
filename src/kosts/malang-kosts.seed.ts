@@ -199,8 +199,8 @@ export function buildMalangDummyKosts(count = 100): Partial<Kost>[] {
       ? Math.round((basePrice * 100) / (100 - discountPercent) / 10000) * 10000
       : basePrice;
 
-    const rating = Number((4.4 + ((i % 6) * 0.1)).toFixed(1));
-    const reviewCount = 8 + ((i * 7) % 95);
+    const rating = 0;
+    const reviewCount = 0;
     const availableRooms = 1 + (i % 6);
 
     const roomFacilities = isExclusive
@@ -349,8 +349,8 @@ export function buildMalangApartmentsAndKontrakans(): Partial<Kost>[] {
       depositAmount: 1500000,
       originalPrice: pricePerMonth + 400000,
       discountPercent: 10,
-      rating: Number((4.6 + (i % 4) * 0.1).toFixed(1)),
-      reviewCount: 15 + (i * 5) % 60,
+      rating: 0,
+      reviewCount: 0,
       availableRooms: 1 + (i % 3),
       roomSize: `${buildingArea} m²`,
       unitType,
@@ -447,8 +447,8 @@ export function buildMalangApartmentsAndKontrakans(): Partial<Kost>[] {
       depositAmount: 1000000,
       originalPrice: pricePerMonth + 250000,
       discountPercent: 8,
-      rating: Number((4.5 + (i % 5) * 0.1).toFixed(1)),
-      reviewCount: 6 + (i * 3) % 35,
+      rating: 0,
+      reviewCount: 0,
       availableRooms: 1,
       roomSize: `LB ${buildingArea}m² / LT ${landArea}m²`,
       unitType: `Rumah ${bedrooms} KT`,
@@ -478,6 +478,159 @@ export function buildMalangApartmentsAndKontrakans(): Partial<Kost>[] {
       latitude: lat,
       longitude: lng,
       isFavorite: false,
+    });
+  }
+
+  return results;
+}
+
+export function buildMalangDailyStays(count = 50): Partial<Kost>[] {
+  const results: Partial<Kost>[] = [];
+  const villaNames = [
+    'Villa Puncak Dieng',
+    'Villa Ijen Heritage',
+    'Villa Tidar Asri',
+    'Villa Sawojajar Harmoni',
+    'Villa Dinoyo Regency',
+    'Villa Suhat Garden',
+    'Villa Buring Indah',
+    'Villa Tlogomas Retreat',
+    'Villa Sulfat Residence',
+    'Villa Ketawanggede Royal',
+    'Villa Sumbersari Exclusive',
+    'Villa Oro-oro Dowo',
+    'Villa Merjosari Sanctuary',
+    'Villa Karangbesuki Hill',
+    'Villa Blimbing Serenity',
+    'Villa Wilis Private',
+    'Villa Candi Panggung',
+    'Villa Semeru Pavilion',
+    'Villa Gajayana Terrace',
+    'Villa Purwantoro Estate',
+    'Villa Kencana Malang',
+    'Villa Anggrek Malang',
+    'Villa Taman Sulfat',
+    'Villa Panderman View',
+    'Villa Nusantara Malang',
+  ];
+  const homestayNames = [
+    'Homestay Omah Ijen',
+    'Homestay Griya Suhat',
+    'Homestay Ndalem Klojen',
+    'Homestay Taman Dinoyo',
+    'Homestay Bale Malang',
+    'Homestay Kayutangan',
+    'Homestay Sumbersari Cozy',
+    'Homestay Tlogomas Indah',
+    'Homestay Sawojajar Family',
+    'Homestay Dieng Terrace',
+    'Homestay Sulfat Nyaman',
+    'Homestay Veteran Guest',
+    'Homestay Buring Residence',
+    'Homestay Purwantoro Asri',
+    'Homestay Jatimulyo Home',
+    'Homestay Sigura-gura',
+    'Homestay Ketawanggede',
+    'Homestay Penanggungan',
+    'Homestay Ciliwung',
+    'Homestay Semeru Guest',
+    'Homestay Karangbesuki',
+    'Homestay Candi Mendut',
+    'Homestay Bandulan',
+    'Homestay Madyopuro',
+    'Homestay Rampal Malang',
+  ];
+
+  const villaImages = [
+    'https://images.unsplash.com/photo-1613490493576-7fde63acd811?w=900&q=80',
+    'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=900&q=80',
+    'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=900&q=80',
+    'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=900&q=80',
+    'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=900&q=80',
+  ];
+
+  for (let i = 1; i <= count; i++) {
+    const isVilla = i % 2 === 1;
+    const area = MALANG_AREAS[(i - 1) % MALANG_AREAS.length];
+    const street = area.streets[(i - 1) % area.streets.length];
+    const unitType = isVilla ? 'Villa' : 'Homestay';
+    const nameIndex = Math.floor((i - 1) / 2);
+    const baseName = isVilla
+      ? villaNames[nameIndex % villaNames.length]
+      : homestayNames[nameIndex % homestayNames.length];
+    const name = nameIndex >= 25 ? `${baseName} ${i}` : baseName;
+
+    const bedrooms = isVilla ? 3 + (i % 3) : 1 + (i % 3); // Villa 3-5 KT, Homestay 1-3 KT
+    const bathrooms = isVilla ? 2 + (i % 2) : 1 + (i % 2);
+    const buildingArea = isVilla ? 140 + bedrooms * 25 : 45 + bedrooms * 18;
+    const landArea = isVilla ? buildingArea + 80 : buildingArea + 20;
+    const pricePerDay = isVilla
+      ? 750000 + (bedrooms - 3) * 300000 + (i % 4) * 100000
+      : 220000 + (bedrooms - 1) * 90000 + (i % 4) * 35000;
+    const originalPrice = pricePerDay + (isVilla ? 150000 : 50000);
+    const discountPercent = isVilla ? 10 + (i % 3) * 3 : 8 + (i % 3) * 2;
+
+    const angle = (i * 137.5) * (Math.PI / 180);
+    const radius = 0.002 + ((i % 5) * 0.0012);
+    const lat = Number((area.lat + Math.cos(angle) * radius).toFixed(6));
+    const lng = Number((area.lng + Math.sin(angle) * radius).toFixed(6));
+
+    results.push({
+      name,
+      slug: `hunian-harian-${unitType.toLowerCase()}-malang-${i}`,
+      propertyCategory: 'HUNIAN_HARIAN',
+      type: 'Campur',
+      city: 'Malang',
+      district: area.district,
+      address: `${street} No. ${10 + i}, ${area.district}, Kota Malang`,
+      description: isVilla
+        ? `${name} menghadirkan suasana menginap privat di ${area.district}, Kota Malang. Dilengkapi ${bedrooms} kamar tidur, ${bathrooms} kamar mandi, ruang keluarga luas, dapur lengkap, serta area parkir pribadi. Cocok untuk liburan keluarga maupun staycation rombongan.`
+        : `${name} menawarkan penginapan harian yang bersih, nyaman, dan strategis di ${area.district}, Kota Malang (${area.landmark}). Tersedia ${bedrooms} kamar tidur ber-AC, WiFi cepat, dan akses mudah ke pusat kuliner maupun kampus.`,
+      pricePerMonth: 0,
+      pricePerDay,
+      depositAmount: 0,
+      originalPrice,
+      discountPercent,
+      rating: 0,
+      reviewCount: 0,
+      availableRooms: isVilla ? 1 : 2 + (i % 3),
+      roomSize: `LB ${buildingArea}m² / LT ${landArea}m²`,
+      unitType,
+      furnishing: 'Full-Furnished',
+      floorLevel: isVilla ? (i % 2 === 0 ? 2 : 1) : 1,
+      buildingArea,
+      landArea,
+      bedrooms,
+      bathrooms,
+      hasCarport: true,
+      isVerified: true,
+      electricityIncluded: true,
+      isSinggahsini: i % 4 === 0,
+      isInstantBooking: true,
+      roomFacilities: isVilla
+        ? ['AC', 'WiFi Cepat', 'Smart TV', 'Water Heater', 'Dapur Lengkap', 'Kulkas']
+        : ['AC', 'WiFi Cepat', 'Smart TV', 'Kamar Mandi Dalam', 'Water Heater'],
+      publicFacilities: isVilla
+        ? ['Carport Luas', 'Taman Pribadi', 'Ruang Keluarga', 'BBQ Area', 'Keamanan 24 Jam']
+        : ['Parkir Mobil & Motor', 'Ruang Tamu Bersama', 'Dapur Mini', 'Check-in Fleksibel'],
+      rules: [
+        'Check-in mulai 14:00 WIB, Check-out maksimal 12:00 WIB',
+        'Dilarang membawa hewan peliharaan & membuat keributan di atas jam 22:00',
+        'Wajib menunjukkan identitas resmi saat check-in',
+      ],
+      images: [
+        villaImages[i % villaImages.length],
+        IMAGE_POOL[(i + 1) % IMAGE_POOL.length],
+        IMAGE_POOL[(i + 4) % IMAGE_POOL.length],
+      ],
+      ownerName: OWNER_NAMES[i % OWNER_NAMES.length],
+      ownerPhone: `62812349${String(40000 + i).slice(-5)}`,
+      ownerId: 1,
+      nearbyLandmark: area.landmark,
+      latitude: lat,
+      longitude: lng,
+      isFavorite: false,
+      approvalStatus: 'APPROVED',
     });
   }
 

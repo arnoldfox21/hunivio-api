@@ -7,7 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Review } from './entities/review.entity';
-import { Booking } from '../bookings/entities/booking.entity';
+import { ReviewReport } from './entities/review-report.entity';
 import { KostsService } from '../kosts/kosts.service';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
 import { UsersService } from '../users/users.service';
@@ -17,8 +17,8 @@ export class ReviewsService {
   constructor(
     @InjectRepository(Review)
     private readonly reviewRepository: Repository<Review>,
-    @InjectRepository(Booking)
-    private readonly bookingRepository: Repository<Booking>,
+    @InjectRepository(ReviewReport)
+    private readonly reviewReportRepository: Repository<ReviewReport>,
     private readonly kostsService: KostsService,
     private readonly firebaseNotificationService: FirebaseNotificationService,
     private readonly usersService: UsersService,
@@ -29,6 +29,36 @@ export class ReviewsService {
       where: { kostId },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  private async getKostName(
+    kostId: number,
+    cache: Map<number, string>,
+  ): Promise<string> {
+    const cached = cache.get(kostId);
+    if (cached !== undefined) return cached;
+    let kostName: string;
+    try {
+      const kost = await this.kostsService.findOne(kostId);
+      kostName = kost.name;
+    } catch {
+      kostName = `Properti #${kostId}`;
+    }
+    cache.set(kostId, kostName);
+    return kostName;
+  }
+
+  private async recalculateKostRating(kostId: number): Promise<void> {
+    const approvedReviews = await this.findByKost(kostId);
+    const avg = approvedReviews.length
+      ? approvedReviews.reduce((acc, r) => acc + r.overallRating, 0) /
+        approvedReviews.length
+      : 0;
+    await this.kostsService.updateRating(
+      kostId,
+      Number(avg.toFixed(1)),
+      approvedReviews.length,
+    );
   }
 
   async create(payload: {
@@ -45,18 +75,19 @@ export class ReviewsService {
       throw new BadRequestException('Komentar ulasan wajib diisi');
     }
 
-    const verifiedBooking = await this.bookingRepository
-      .createQueryBuilder('b')
-      .where('b.kostId = :kostId', { kostId: payload.kostId })
-      .andWhere('b.userId = :userId', { userId: payload.userId })
-      .andWhere('b.status IN (:...statuses)', {
-        statuses: ['AKTIF', 'SELESAI', 'DISETUJUI'],
-      })
-      .getOne();
-
-    if (!verifiedBooking) {
+    const kost = await this.kostsService.findOne(payload.kostId);
+    if (kost.ownerId === payload.userId) {
       throw new ForbiddenException(
-        'Hanya penyewa dengan booking aktif/disetujui yang dapat menulis ulasan terverifikasi.',
+        'Pemilik properti tidak dapat menulis ulasan pada propertinya sendiri.',
+      );
+    }
+
+    const existing = await this.reviewRepository.findOne({
+      where: { kostId: payload.kostId, userId: payload.userId },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        'Anda sudah memberikan ulasan untuk properti ini.',
       );
     }
 
@@ -82,20 +113,10 @@ export class ReviewsService {
     });
 
     const saved = await this.reviewRepository.save(review);
-
-    const allReviews = await this.findByKost(payload.kostId);
-    const avg =
-      allReviews.reduce((acc, r) => acc + r.overallRating, 0) /
-      allReviews.length;
-    await this.kostsService.updateRating(
-      payload.kostId,
-      Number(avg.toFixed(1)),
-      allReviews.length,
-    );
+    await this.recalculateKostRating(payload.kostId);
 
     try {
-      const kost = await this.kostsService.findOne(payload.kostId);
-      if (kost.ownerId && kost.ownerId !== payload.userId) {
+      if (kost.ownerId && kost.ownerId !== saved.userId) {
         const token = await this.usersService.getFcmToken(kost.ownerId);
         if (token) {
           await this.firebaseNotificationService.sendGeneralNotification({
@@ -172,5 +193,131 @@ export class ReviewsService {
     }
 
     return saved;
+  }
+
+  async reportReview(
+    reviewId: number,
+    reporterId: number,
+    reason: string,
+    details?: string,
+  ): Promise<ReviewReport> {
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) {
+      throw new BadRequestException('Alasan laporan wajib diisi.');
+    }
+
+    const review = await this.reviewRepository.findOne({
+      where: { id: reviewId },
+    });
+    if (!review) {
+      throw new NotFoundException('Ulasan tidak ditemukan.');
+    }
+    if (review.userId === reporterId) {
+      throw new BadRequestException(
+        'Anda tidak dapat melaporkan ulasan Anda sendiri.',
+      );
+    }
+
+    const existingOpen = await this.reviewReportRepository.findOne({
+      where: { reviewId, reporterId, status: 'OPEN' },
+    });
+    if (existingOpen) {
+      throw new BadRequestException('Anda sudah melaporkan ulasan ini.');
+    }
+
+    let reporterName = 'Pengguna';
+    try {
+      const user = await this.usersService.findOne(reporterId);
+      if (user?.name?.trim()) {
+        reporterName = user.name.trim();
+      }
+    } catch {
+      // Gunakan nama default jika lookup gagal
+    }
+
+    const report = this.reviewReportRepository.create({
+      reviewId,
+      kostId: review.kostId,
+      reporterId,
+      reporterName,
+      reason: trimmedReason,
+      details: details?.trim() ? details.trim() : null,
+      status: 'OPEN',
+    });
+    return this.reviewReportRepository.save(report);
+  }
+
+  async findOpenReports(): Promise<
+    Array<
+      ReviewReport & {
+        kostName: string;
+        reviewComment: string;
+        reviewAuthorName: string;
+        reviewOverallRating: number;
+      }
+    >
+  > {
+    const reports = await this.reviewReportRepository.find({
+      where: { status: 'OPEN' },
+      order: { createdAt: 'DESC' },
+    });
+    const kostNameCache = new Map<number, string>();
+    const reviewCache = new Map<number, Review | null>();
+    const result: Array<
+      ReviewReport & {
+        kostName: string;
+        reviewComment: string;
+        reviewAuthorName: string;
+        reviewOverallRating: number;
+      }
+    > = [];
+
+    for (const report of reports) {
+      let review = reviewCache.get(report.reviewId);
+      if (review === undefined) {
+        review = await this.reviewRepository.findOne({
+          where: { id: report.reviewId },
+        });
+        reviewCache.set(report.reviewId, review);
+      }
+      if (!review) {
+        continue;
+      }
+      const kostName = await this.getKostName(report.kostId, kostNameCache);
+      result.push(
+        Object.assign(report, {
+          kostName,
+          reviewComment: review.comment,
+          reviewAuthorName: review.userName,
+          reviewOverallRating: review.overallRating,
+        }),
+      );
+    }
+    return result;
+  }
+
+  async dismissReport(reportId: number): Promise<ReviewReport> {
+    const report = await this.reviewReportRepository.findOne({
+      where: { id: reportId },
+    });
+    if (!report) {
+      throw new NotFoundException('Laporan ulasan tidak ditemukan.');
+    }
+    report.status = 'DISMISSED';
+    return this.reviewReportRepository.save(report);
+  }
+
+  async deleteReview(reviewId: number): Promise<{ deleted: true }> {
+    const review = await this.reviewRepository.findOne({
+      where: { id: reviewId },
+    });
+    if (!review) {
+      throw new NotFoundException('Ulasan tidak ditemukan.');
+    }
+
+    await this.reviewReportRepository.delete({ reviewId });
+    await this.reviewRepository.delete({ id: reviewId });
+    await this.recalculateKostRating(review.kostId);
+    return { deleted: true };
   }
 }

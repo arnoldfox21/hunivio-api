@@ -13,7 +13,11 @@ import { UserFavorite } from './entities/user-favorite.entity';
 import { User } from '../users/entities/user.entity';
 import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
-import { buildMalangDummyKosts, buildMalangApartmentsAndKontrakans } from './malang-kosts.seed';
+import {
+  buildMalangDummyKosts,
+  buildMalangApartmentsAndKontrakans,
+  buildMalangDailyStays,
+} from './malang-kosts.seed';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
 
 @Injectable()
@@ -138,6 +142,7 @@ export class KostsService implements OnModuleInit {
     const candidates = [
       ...buildMalangDummyKosts(100),
       ...buildMalangApartmentsAndKontrakans(),
+      ...buildMalangDailyStays(50),
     ];
     const existingSlugs = new Set(
       (
@@ -188,6 +193,7 @@ export class KostsService implements OnModuleInit {
   async findAll(query: {
     search?: string;
     propertyCategory?: string;
+    unitType?: string;
     type?: string;
     city?: string;
     facility?: string;
@@ -223,8 +229,21 @@ export class KostsService implements OnModuleInit {
     }
 
     if (query.propertyCategory && query.propertyCategory !== 'SEMUA') {
-      qb.andWhere('UPPER(kost.propertyCategory) = UPPER(:cat)', {
-        cat: query.propertyCategory,
+      const cat = query.propertyCategory.trim().toUpperCase();
+      if (cat === 'LONG_TERM') {
+        qb.andWhere('UPPER(kost.propertyCategory) IN (:...longTermCats)', {
+          longTermCats: ['KOST', 'APARTEMEN', 'KONTRAKAN'],
+        });
+      } else {
+        qb.andWhere('UPPER(kost.propertyCategory) = UPPER(:cat)', {
+          cat,
+        });
+      }
+    }
+
+    if (query.unitType && query.unitType !== 'Semua') {
+      qb.andWhere('LOWER(kost.unitType) = LOWER(:unitType)', {
+        unitType: query.unitType.trim(),
       });
     }
 
@@ -272,17 +291,20 @@ export class KostsService implements OnModuleInit {
       qb.andWhere('LOWER(kost.city) = LOWER(:city)', { city: query.city });
     }
 
+    const effectivePriceExpr =
+      "CASE WHEN UPPER(kost.propertyCategory) = 'HUNIAN_HARIAN' THEN COALESCE(NULLIF(kost.pricePerDay, 0), kost.pricePerMonth) ELSE kost.pricePerMonth END";
+
     if (query.minPrice) {
       const min = parseInt(query.minPrice, 10);
       if (!isNaN(min)) {
-        qb.andWhere('kost.pricePerMonth >= :min', { min });
+        qb.andWhere(`${effectivePriceExpr} >= :min`, { min });
       }
     }
 
     if (query.maxPrice) {
       const max = parseInt(query.maxPrice, 10);
       if (!isNaN(max)) {
-        qb.andWhere('kost.pricePerMonth <= :max', { max });
+        qb.andWhere(`${effectivePriceExpr} <= :max`, { max });
       }
     }
 
@@ -297,10 +319,12 @@ export class KostsService implements OnModuleInit {
 
     switch (query.sortBy) {
       case 'price_asc':
-        qb.orderBy('kost.pricePerMonth', 'ASC');
+        qb.addSelect(effectivePriceExpr, 'effective_price')
+          .orderBy('effective_price', 'ASC');
         break;
       case 'price_desc':
-        qb.orderBy('kost.pricePerMonth', 'DESC');
+        qb.addSelect(effectivePriceExpr, 'effective_price')
+          .orderBy('effective_price', 'DESC');
         break;
       case 'rating_desc':
         qb.orderBy('kost.rating', 'DESC');
@@ -385,6 +409,7 @@ export class KostsService implements OnModuleInit {
 
   async getMapPoints(query: {
     propertyCategory?: string;
+    unitType?: string;
     type?: string;
     city?: string;
   }) {
@@ -394,11 +419,14 @@ export class KostsService implements OnModuleInit {
         'kost.id',
         'kost.name',
         'kost.propertyCategory',
+        'kost.unitType',
         'kost.type',
         'kost.city',
         'kost.district',
         'kost.pricePerMonth',
+        'kost.pricePerDay',
         'kost.rating',
+        'kost.reviewCount',
         'kost.availableRooms',
         'kost.latitude',
         'kost.longitude',
@@ -416,8 +444,21 @@ export class KostsService implements OnModuleInit {
       });
 
     if (query.propertyCategory && query.propertyCategory !== 'SEMUA') {
-      qb.andWhere('UPPER(kost.propertyCategory) = UPPER(:cat)', {
-        cat: query.propertyCategory,
+      const cat = query.propertyCategory.trim().toUpperCase();
+      if (cat === 'LONG_TERM') {
+        qb.andWhere('UPPER(kost.propertyCategory) IN (:...longTermCats)', {
+          longTermCats: ['KOST', 'APARTEMEN', 'KONTRAKAN'],
+        });
+      } else {
+        qb.andWhere('UPPER(kost.propertyCategory) = UPPER(:cat)', {
+          cat,
+        });
+      }
+    }
+
+    if (query.unitType && query.unitType !== 'Semua') {
+      qb.andWhere('LOWER(kost.unitType) = LOWER(:unitType)', {
+        unitType: query.unitType.trim(),
       });
     }
     if (query.type && query.type !== 'Semua') {

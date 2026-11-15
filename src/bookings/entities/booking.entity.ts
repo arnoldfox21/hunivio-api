@@ -29,31 +29,16 @@ export class Booking {
   @Column()
   startDate: string;
 
-  @Column({ type: 'int', default: 1 })
-  durationMonths: number;
-
-  @Column({ type: 'int' })
-  totalPrice: number;
-
   @Column({ type: 'int', nullable: true })
   userId: number | null;
 
-  @Column({ default: 'SEWA' })
-  bookingType: string; // 'SEWA' | 'SURVEI'
+  @Column({ default: 'SURVEI' })
+  bookingType: string;
 
   @Column({ default: '' })
   surveyDateTime: string;
 
-  @Column({ default: 'QRIS' })
-  paymentMethod: string;
-
-  @Column({ default: 'BELUM_BAYAR' })
-  paymentStatus: string; // 'BELUM_BAYAR' | 'MENUNGGU_PEMBAYARAN' | 'LUNAS'
-
-  @Column({ default: '' })
-  invoiceNumber: string;
-
-  @Column({ default: 'MENUNGGU KONFIRMASI' })
+  @Column({ default: 'TERKIRIM' })
   status: string;
 
   @Column({ type: 'text', nullable: true })

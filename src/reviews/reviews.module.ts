@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Review } from './entities/review.entity';
-import { Booking } from '../bookings/entities/booking.entity';
+import { ReviewReport } from './entities/review-report.entity';
 import { ReviewsService } from './reviews.service';
 import { ReviewsController } from './reviews.controller';
 import { KostsModule } from '../kosts/kosts.module';
@@ -10,7 +10,7 @@ import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Review, Booking]),
+    TypeOrmModule.forFeature([Review, ReviewReport]),
     KostsModule,
     ChatsModule,
     UsersModule,

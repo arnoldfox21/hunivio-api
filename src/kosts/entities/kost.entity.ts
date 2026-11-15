@@ -18,7 +18,7 @@ export class Kost {
   slug: string;
 
   @Column({ default: 'KOST' })
-  propertyCategory: string; // 'KOST' | 'APARTEMEN' | 'KONTRAKAN'
+  propertyCategory: string; // 'KOST' | 'APARTEMEN' | 'KONTRAKAN' | 'HUNIAN_HARIAN'
 
   @Column({ default: 'Campur' })
   type: string; // 'Putra' | 'Putri' | 'Campur' | 'Umum'
@@ -53,10 +53,10 @@ export class Kost {
   @Column({ type: 'int', default: 0 })
   discountPercent: number;
 
-  @Column({ type: 'float', default: 4.7 })
+  @Column({ type: 'float', default: 0 })
   rating: number;
 
-  @Column({ type: 'int', default: 10 })
+  @Column({ type: 'int', default: 0 })
   reviewCount: number;
 
   @Column({ type: 'int', default: 3 })

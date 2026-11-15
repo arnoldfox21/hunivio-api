@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString } from 'class-validator';
 
 export class CreateBookingDto {
   @IsInt()
@@ -13,10 +13,6 @@ export class CreateBookingDto {
   @IsString()
   startDate: string;
 
-  @IsInt()
-  @Min(1)
-  durationMonths: number;
-
   @IsOptional()
   @IsInt()
   userId?: number;
@@ -28,10 +24,6 @@ export class CreateBookingDto {
   @IsOptional()
   @IsString()
   surveyDateTime?: string;
-
-  @IsOptional()
-  @IsString()
-  paymentMethod?: string;
 
   @IsOptional()
   @IsString()
