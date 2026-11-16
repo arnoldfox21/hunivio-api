@@ -33,9 +33,10 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-hunivio_db}}
     volumes:
-      - ./uploads:/app/uploads
+      - uploads_data:/app/uploads
       # Uncomment jika file firebase-service-account.json sudah ada di VPS:
       # - ./firebase-service-account.json:/app/firebase-service-account.json:ro
 
 volumes:
   pgdata:
+  uploads_data:
