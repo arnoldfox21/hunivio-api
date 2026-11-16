@@ -133,18 +133,21 @@ export class KostsController {
   }
 
   @Get('cities')
-  getCities() {
-    return this.kostsService.getCities();
+  getCities(@Query('propertyCategory') propertyCategory?: string) {
+    return this.kostsService.getCities(propertyCategory);
   }
 
   @Get('filters')
-  getFilters() {
-    return this.kostsService.getFilters();
+  getFilters(@Query('propertyCategory') propertyCategory?: string) {
+    return this.kostsService.getFilters(propertyCategory);
   }
 
   @Get('master-facilities')
-  getMasterFacilities() {
-    return this.kostsService.getMasterFacilities();
+  getMasterFacilities(
+    @Query('category') category?: string,
+    @Query('unitType') unitType?: string,
+  ) {
+    return this.kostsService.getMasterFacilities(category, unitType);
   }
 
   @Get(':id')

@@ -205,7 +205,7 @@ export class ChatsGateway implements OnGatewayConnection {
       if (fcmToken) {
         await this.firebaseNotificationService.sendChatNotification({
           token: fcmToken,
-          title: latest.senderName || 'Pesan Baru di HuniVio',
+          title: latest.senderName || 'Pesan Baru di Keyloka',
           body: latest.message,
           kostId: latest.kostId,
           senderId: latest.senderId,

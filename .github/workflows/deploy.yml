@@ -26,7 +26,7 @@ jobs:
         id: meta
         run: |
           OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "image_name=${{ env.REGISTRY }}/${OWNER_LOWER}/hunivio-api" >> "$GITHUB_OUTPUT"
+          echo "image_name=${{ env.REGISTRY }}/${OWNER_LOWER}/keyloka-api" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

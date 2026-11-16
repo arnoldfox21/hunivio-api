@@ -43,23 +43,23 @@ export class UsersService implements OnModuleInit {
   }
 
   private async _ensureDefaultStaffPartner() {
-    const email = 'partner.malang@hunivio.id';
+    const email = 'partner.malang@keyloka.id';
     const existing = await this.userRepository.findOne({ where: { email } });
     if (existing) return;
     const partner = this.userRepository.create({
       googleId: 'staff_partner_malang',
       email,
-      name: 'HuniVio Partner Malang',
-      username: 'huniviopartnermalang',
+      name: 'Keyloka Partner Malang',
+      username: 'keylokapartnermalang',
       avatarUrl:
-        'https://ui-avatars.com/api/?name=HuniVio+Partner+Malang&background=1BAA56&color=ffffff&size=256&bold=true&format=png',
+        'https://ui-avatars.com/api/?name=Keyloka+Partner+Malang&background=1BAA56&color=ffffff&size=256&bold=true&format=png',
       phone: '6281234567890',
       showWhatsapp: true,
-      bio: 'Pengelola & kurator properti resmi HuniVio area Malang Raya. Siap membantu jadwal survei dan info ketersediaan unit.',
+      bio: 'Pengelola & kurator properti resmi Keyloka area Malang Raya. Siap membantu jadwal survei dan info ketersediaan unit.',
       city: 'Kota Malang',
       role: 'STAFF',
       onboardingCompleted: true,
-      passwordHash: this._hashPassword('HuniVio2026!'),
+      passwordHash: this._hashPassword('Keyloka2026!'),
     });
     await this.userRepository.save(partner);
   }

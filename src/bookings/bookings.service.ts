@@ -113,7 +113,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           locked.pointsEarned = await this._awardBookingPoints(
             manager,
             locked,
-            kost?.name || 'Properti HuniVio',
+            kost?.name || 'Properti Keyloka',
           );
           await bookingRepo.save(locked);
           releasedCount += 1;
@@ -322,7 +322,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       } else if (nextStatus === 'AKTIF') {
         notifText = `Status sewa Anda di ${kost.name} kini AKTIF. Selamat menempati properti!`;
       } else if (nextStatus === 'SELESAI') {
-        notifText = `Masa sewa Anda di ${kost.name} telah ditandai SELESAI. Terima kasih telah menggunakan HuniVio.`;
+        notifText = `Masa sewa Anda di ${kost.name} telah ditandai SELESAI. Terima kasih telah menggunakan Keyloka.`;
       }
       if (notifText) {
         try {
@@ -462,17 +462,21 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const isDaily =
-      (kost.propertyCategory || '').toUpperCase() === 'HUNIAN_HARIAN';
-    const durationUnit = isDaily ? 'DAY' : 'MONTH';
+    const cat = (kost.propertyCategory || '').toUpperCase();
+    const isDaily = cat === 'HUNIAN_HARIAN';
+    const isYearly = cat === 'KONTRAKAN' && (kost.pricePerYear ?? 0) > 0;
+    const durationUnit = isDaily ? 'DAY' : isYearly ? 'YEAR' : 'MONTH';
+    const maxDuration = isDaily ? 30 : isYearly ? 5 : 12;
     const durationCount = Math.max(
       1,
-      Math.min(isDaily ? 30 : 12, Math.round(Number(params.durationCount) || 1)),
+      Math.min(maxDuration, Math.round(Number(params.durationCount) || 1)),
     );
     const unitPrice =
       isDaily && (kost.pricePerDay ?? 0) > 0
         ? Number(kost.pricePerDay)
-        : Number(kost.pricePerMonth);
+        : isYearly
+          ? Number(kost.pricePerYear)
+          : Number(kost.pricePerMonth);
     if (!unitPrice || unitPrice <= 0) {
       throw new BadRequestException(
         'Harga sewa properti belum tersedia untuk booking langsung.',
@@ -525,10 +529,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
             ...(pointsDiscountAmount > 0
               ? [
                   {
-                    id: 'HUNIVIO-POINTS-DISCOUNT',
+                    id: 'KEYLOKA-POINTS-DISCOUNT',
                     price: -pointsDiscountAmount,
                     quantity: 1,
-                    name: `Potongan ${pointsUsed} Poin HuniVio`,
+                    name: `Potongan ${pointsUsed} Poin Keyloka`,
                   },
                 ]
               : []),
@@ -553,12 +557,12 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       },
       item_details: itemDetails,
       customer_details: {
-        first_name: params.tenantName || user?.name || 'Penyewa HuniVio',
+        first_name: params.tenantName || user?.name || 'Penyewa Keyloka',
         email: user?.email || undefined,
         phone: params.tenantPhone || user?.phone || undefined,
       },
       callbacks: {
-        finish: 'https://hunivio.app/payment/finish',
+        finish: 'https://keyloka.app/payment/finish',
       },
     };
 
@@ -756,7 +760,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
             senderId: updated.userId,
             senderName: updated.tenantName,
             receiverId: kost.ownerId,
-            message: `Halo, saya telah membayar booking untuk ${kost.name} (${updated.durationCount} ${updated.durationUnit === 'DAY' ? 'hari' : 'bulan'}) mulai ${updated.startDate}. Dana aman di Escrow HuniVio hingga saya konfirmasi check-in.`,
+            message: `Halo, saya telah membayar booking untuk ${kost.name} (${updated.durationCount} ${updated.durationUnit === 'DAY' ? 'hari' : 'bulan'}) mulai ${updated.startDate}. Dana aman di Escrow Keyloka hingga saya konfirmasi check-in.`,
           });
           await this.chatsGateway.notifyNewChatMessage(autoChat);
         } catch {
@@ -856,7 +860,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
             senderId: updated.userId,
             senderName: updated.tenantName,
             receiverId: kost.ownerId,
-            message: `Halo, saya telah membayar booking untuk ${kost.name} (${updated.durationCount} ${updated.durationUnit === 'DAY' ? 'hari' : 'bulan'}) mulai ${updated.startDate}. Dana aman di Escrow HuniVio hingga saya konfirmasi check-in.`,
+            message: `Halo, saya telah membayar booking untuk ${kost.name} (${updated.durationCount} ${updated.durationUnit === 'DAY' ? 'hari' : 'bulan'}) mulai ${updated.startDate}. Dana aman di Escrow Keyloka hingga saya konfirmasi check-in.`,
           });
           await this.chatsGateway.notifyNewChatMessage(autoChat);
         } catch {
@@ -1014,7 +1018,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         booking.pointsEarned = await this._awardBookingPoints(
           manager,
           booking,
-          kost?.name || 'Properti HuniVio',
+          kost?.name || 'Properti Keyloka',
         );
       } else {
         if (kost) {

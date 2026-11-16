@@ -12,7 +12,7 @@ function getJwtSecret(): string {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('JWT_SECRET wajib dikonfigurasi di environment production.');
   }
-  return 'hunivio_dev_only_fallback_secret_change_in_prod';
+  return 'keyloka_dev_only_fallback_secret_change_in_prod';
 }
 
 export function signAuthToken(payload: AuthUserPayload): string {

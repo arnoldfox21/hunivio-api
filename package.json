@@ -1,7 +1,7 @@
 {
-  "name": "hunivio-api",
+  "name": "keyloka-api",
   "version": "1.0.0",
-  "description": "NestJS + PostgreSQL Backend API for HuniVio (Kost Listing & Booking App)",
+  "description": "NestJS + PostgreSQL Backend API for Keyloka (Kost Listing & Booking App)",
   "private": true,
   "scripts": {
     "db:up": "bash ./ensure-postgres.sh",

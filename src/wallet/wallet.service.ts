@@ -263,10 +263,10 @@ export class WalletService {
       },
       item_details: [
         {
-          id: 'HUNIVIO-CREDIT',
+          id: 'KEYLOKA-CREDIT',
           price: amount,
           quantity: 1,
-          name: `Top Up Saldo Kredit HuniVio (${amount.toLocaleString('id-ID')})`,
+          name: `Top Up Saldo Kredit Keyloka (${amount.toLocaleString('id-ID')})`,
         },
       ],
       customer_details: {
@@ -275,7 +275,7 @@ export class WalletService {
         phone: user.phone || undefined,
       },
       callbacks: {
-        finish: 'https://hunivio.app/payment/finish',
+        finish: 'https://keyloka.app/payment/finish',
       },
     };
 
@@ -315,7 +315,7 @@ export class WalletService {
       snapToken: data.token,
       paymentUrl: data.redirect_url,
       paymentMethod: '',
-      description: 'Top-up saldo kredit HuniVio',
+      description: 'Top-up saldo kredit Keyloka',
     });
 
     const saved = await this.walletRepo.save(tx);

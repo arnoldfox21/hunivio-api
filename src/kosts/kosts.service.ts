@@ -127,7 +127,113 @@ export class KostsService implements OnModuleInit {
     }
   }
 
-  async getMasterFacilities() {
+  private getFacilityPresetsByCategory(category?: string, unitType?: string): {
+    roomFacilities: string[];
+    publicFacilities: string[];
+  } | null {
+    const cat = (category || '').trim().toUpperCase();
+    const sub = (unitType || '').trim().toLowerCase();
+
+    if (cat === 'KONTRAKAN') {
+      return {
+        roomFacilities: [
+          'Kamar Tidur',
+          'Ruang Tamu',
+          'Ruang Keluarga',
+          'Dapur Pribadi',
+          'Kamar Mandi',
+          'Shower',
+          'Kloset Duduk',
+          'Kloset Jongkok',
+          'AC',
+          'Water Heater',
+          'Teras / Halaman',
+          'Toren & Pompa Air',
+          'Listrik Token',
+          'PDAM / Air Sumur',
+        ],
+        publicFacilities: [
+          'Carport / Garasi',
+          'Parkir Motor',
+          'Parkir Mobil',
+          'Akses Jalan Mobil',
+          'Keamanan 24 Jam / One Gate',
+          'CCTV Lingkungan',
+          'Dekat Masjid / Mushola',
+          'Bebas Banjir',
+          'Taman',
+        ],
+      };
+    }
+
+    if (cat === 'HUNIAN_HARIAN') {
+      if (sub === 'homestay') {
+        return {
+          roomFacilities: [
+            'AC',
+            'Kipas Angin',
+            'WiFi',
+            'TV',
+            'Kasur Nyaman',
+            'Kamar Mandi Dalam',
+            'Shower',
+            'Water Heater',
+            'Handuk & Perlengkapan Mandi',
+            'Meja & Kursi',
+            'Lemari',
+            'Balkon / Teras',
+          ],
+          publicFacilities: [
+            'Sarapan',
+            'Ruang Tamu Bersama',
+            'Pantry / Dapur Bersama',
+            'Dispenser / Air Mineral',
+            'Parkir Motor',
+            'Parkir Mobil',
+            'Check-in 24 Jam',
+            'Laundry',
+            'CCTV',
+          ],
+        };
+      }
+      // Default HUNIAN_HARIAN -> Villa
+      return {
+        roomFacilities: [
+          'Private Pool',
+          'AC',
+          'WiFi',
+          'Smart TV / Karaoke',
+          'Kitchen Set Lengkap',
+          'Kulkas',
+          'Dispenser',
+          'Ruang Keluarga',
+          'Water Heater',
+          'Bathtub',
+          'Balkon / Rooftop',
+          'View Alam',
+          'Handuk & Amenities',
+        ],
+        publicFacilities: [
+          'Area BBQ',
+          'Taman Pribadi',
+          'Parkir Mobil Luas',
+          'Carport / Garasi',
+          'Sarapan (Opsional)',
+          'Penjaga / Caretaker 24 Jam',
+          'CCTV',
+          'Free Listrik & Air',
+        ],
+      };
+    }
+
+    return null;
+  }
+
+  async getMasterFacilities(category?: string, unitType?: string) {
+    const preset = this.getFacilityPresetsByCategory(category, unitType);
+    if (preset) {
+      return preset;
+    }
     const all = await this.facilityRepository.find({
       where: { isActive: true },
       order: { id: 'ASC' },
@@ -290,7 +396,7 @@ export class KostsService implements OnModuleInit {
     }
 
     const effectivePriceExpr =
-      "CASE WHEN UPPER(kost.propertyCategory) = 'HUNIAN_HARIAN' THEN COALESCE(NULLIF(kost.pricePerDay, 0), kost.pricePerMonth) ELSE kost.pricePerMonth END";
+      "CASE WHEN UPPER(kost.propertyCategory) = 'HUNIAN_HARIAN' THEN COALESCE(NULLIF(kost.pricePerDay, 0), kost.pricePerMonth) WHEN UPPER(kost.propertyCategory) = 'KONTRAKAN' THEN COALESCE(NULLIF(kost.pricePerYear, 0), kost.pricePerMonth) ELSE kost.pricePerMonth END";
 
     if (query.minPrice) {
       const min = parseInt(query.minPrice, 10);
@@ -495,14 +601,31 @@ export class KostsService implements OnModuleInit {
     return this.syncOwnerNames(list);
   }
 
-  async getCities() {
-    const raw = await this.kostRepository
+  private applyCategoryFilter(
+    qb: ReturnType<Repository<Kost>['createQueryBuilder']>,
+    propertyCategory?: string,
+  ) {
+    if (!propertyCategory || propertyCategory === 'SEMUA') return;
+    const cat = propertyCategory.trim().toUpperCase();
+    if (cat === 'LONG_TERM') {
+      qb.andWhere('UPPER(kost.propertyCategory) IN (:...longTermCats)', {
+        longTermCats: ['KOST', 'APARTEMEN', 'KONTRAKAN'],
+      });
+    } else {
+      qb.andWhere('UPPER(kost.propertyCategory) = UPPER(:cat)', { cat });
+    }
+  }
+
+  async getCities(propertyCategory?: string) {
+    const qb = this.kostRepository
       .createQueryBuilder('kost')
       .select('kost.city', 'city')
       .addSelect('COUNT(kost.id)', 'count')
       .where('kost.approvalStatus = :approvedStatus', {
         approvedStatus: 'APPROVED',
-      })
+      });
+    this.applyCategoryFilter(qb, propertyCategory);
+    const raw = await qb
       .groupBy('kost.city')
       .orderBy('COUNT(kost.id)', 'DESC')
       .getRawMany();
@@ -521,26 +644,31 @@ export class KostsService implements OnModuleInit {
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }
 
-  private _filtersCache: {
-    expiresAt: number;
-    data: {
-      cities: string[];
-      types: string[];
-      facilities: string[];
-      cityStats: Array<{
-        city: string;
-        count: number;
-        districts: Array<{ district: string; count: number }>;
-      }>;
-    };
-  } | null = null;
+  private _filtersCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      data: {
+        cities: string[];
+        types: string[];
+        facilities: string[];
+        cityStats: Array<{
+          city: string;
+          count: number;
+          districts: Array<{ district: string; count: number }>;
+        }>;
+      };
+    }
+  >();
 
-  async getFilters() {
-    if (this._filtersCache && Date.now() < this._filtersCache.expiresAt) {
-      return this._filtersCache.data;
+  async getFilters(propertyCategory?: string) {
+    const cacheKey = (propertyCategory || 'SEMUA').trim().toUpperCase();
+    const cached = this._filtersCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.data;
     }
 
-    const allKosts = await this.kostRepository
+    const qb = this.kostRepository
       .createQueryBuilder('kost')
       .select([
         'kost.city',
@@ -549,8 +677,9 @@ export class KostsService implements OnModuleInit {
         'kost.roomFacilities',
         'kost.publicFacilities',
       ])
-      .where('kost.approvalStatus = :status', { status: 'APPROVED' })
-      .getMany();
+      .where('kost.approvalStatus = :status', { status: 'APPROVED' });
+    this.applyCategoryFilter(qb, propertyCategory);
+    const allKosts = await qb.getMany();
     const cityCounts = new Map<string, { label: string; count: number }>();
     const cityDistrictCounts = new Map<
       string,
@@ -626,10 +755,10 @@ export class KostsService implements OnModuleInit {
       facilities,
       cityStats,
     };
-    this._filtersCache = {
+    this._filtersCache.set(cacheKey, {
       expiresAt: Date.now() + 60_000,
       data: result,
-    };
+    });
     return result;
   }
 
@@ -660,7 +789,44 @@ export class KostsService implements OnModuleInit {
     return kost;
   }
 
+  private validateCategoryPricing(params: {
+    category?: string;
+    pricePerMonth?: number | null;
+    pricePerDay?: number | null;
+    pricePerYear?: number | null;
+  }) {
+    const cat = (params.category || 'KOST').trim().toUpperCase();
+    if (cat === 'HUNIAN_HARIAN') {
+      if (!params.pricePerDay || params.pricePerDay <= 0) {
+        throw new BadRequestException(
+          'Harga per malam wajib diisi untuk kategori Hunian Harian.',
+        );
+      }
+      return;
+    }
+    if (cat === 'KONTRAKAN') {
+      if (!params.pricePerYear || params.pricePerYear <= 0) {
+        throw new BadRequestException(
+          'Harga per tahun wajib diisi untuk kategori Kontrakan.',
+        );
+      }
+      return;
+    }
+    if (!params.pricePerMonth || params.pricePerMonth <= 0) {
+      throw new BadRequestException(
+        'Harga per bulan wajib diisi untuk kategori Kost / Apartemen.',
+      );
+    }
+  }
+
   async create(dto: CreateKostDto): Promise<Kost> {
+    const category = (dto.propertyCategory || 'KOST').trim().toUpperCase();
+    this.validateCategoryPricing({
+      category,
+      pricePerMonth: dto.pricePerMonth,
+      pricePerDay: dto.pricePerDay,
+      pricePerYear: dto.pricePerYear,
+    });
     const slug =
       dto.name
         .toLowerCase()
@@ -690,6 +856,11 @@ export class KostsService implements OnModuleInit {
 
       const kost = kostRepo.create({
         ...dto,
+        propertyCategory: category,
+        pricePerMonth:
+          category === 'HUNIAN_HARIAN' || category === 'KONTRAKAN'
+            ? 0
+            : (dto.pricePerMonth ?? 0),
         city: toTitleCaseRegion(dto.city),
         district: toTitleCaseRegion(dto.district),
         ownerId,
@@ -704,7 +875,7 @@ export class KostsService implements OnModuleInit {
         rejectionReason: '',
       });
       const saved = await kostRepo.save(kost);
-      this._filtersCache = null;
+      this._filtersCache.clear();
       return saved;
     });
   }
@@ -731,7 +902,7 @@ export class KostsService implements OnModuleInit {
       kost.ownerPhone = targetOwner.phone.trim();
     }
     const saved = await this.kostRepository.save(kost);
-    this._filtersCache = null;
+    this._filtersCache.clear();
     await this.syncOwnerNames([saved]);
     return saved;
   }
@@ -781,7 +952,7 @@ export class KostsService implements OnModuleInit {
               : 'Properti Ditolak';
           const body =
             normalized === 'APPROVED'
-              ? `${kost.name} telah disetujui dan kini tampil di pencarian HuniVio.`
+              ? `${kost.name} telah disetujui dan kini tampil di pencarian Keyloka.`
               : `${kost.name} perlu diperbaiki${kost.rejectionReason ? `: ${kost.rejectionReason}` : '.'}`;
           await this.firebaseNotificationService.sendGeneralNotification({
             token,
@@ -799,7 +970,7 @@ export class KostsService implements OnModuleInit {
       }
     }
 
-    this._filtersCache = null;
+    this._filtersCache.clear();
     return saved;
   }
 
@@ -813,6 +984,25 @@ export class KostsService implements OnModuleInit {
         ? { district: toTitleCaseRegion(dto.district) }
         : {}),
     });
+    const nextCat = (kost.propertyCategory || 'KOST').trim().toUpperCase();
+    if (
+      dto.propertyCategory !== undefined ||
+      dto.pricePerMonth !== undefined ||
+      dto.pricePerDay !== undefined ||
+      dto.pricePerYear !== undefined
+    ) {
+      if (nextCat === 'KONTRAKAN') {
+        kost.pricePerMonth = 0;
+      } else if (nextCat === 'HUNIAN_HARIAN') {
+        kost.pricePerMonth = 0;
+      }
+      this.validateCategoryPricing({
+        category: nextCat,
+        pricePerMonth: kost.pricePerMonth,
+        pricePerDay: kost.pricePerDay,
+        pricePerYear: kost.pricePerYear,
+      });
+    }
     if (wasRejected) {
       const owner = await this.userRepository.findOne({
         where: { id: kost.ownerId },
@@ -824,14 +1014,14 @@ export class KostsService implements OnModuleInit {
       }
     }
     const saved = await this.kostRepository.save(kost);
-    this._filtersCache = null;
+    this._filtersCache.clear();
     return saved;
   }
 
   async remove(id: number): Promise<{ deleted: boolean; id: number }> {
     const kost = await this.findOne(id);
     await this.kostRepository.remove(kost);
-    this._filtersCache = null;
+    this._filtersCache.clear();
     return { deleted: true, id };
   }
 

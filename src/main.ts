@@ -89,6 +89,6 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3001;
   await app.listen(port, '0.0.0.0');
-  console.log(`🚀 HuniVio NestJS API running on http://0.0.0.0:${port}/api`);
+  console.log(`🚀 Keyloka NestJS API running on http://0.0.0.0:${port}/api`);
 }
 bootstrap();

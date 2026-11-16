@@ -37,8 +37,9 @@ export class CreateKostDto {
   @IsString()
   description: string;
 
+  @IsOptional()
   @IsInt()
-  pricePerMonth: number;
+  pricePerMonth?: number;
 
   @IsOptional()
   @IsInt()

@@ -1,26 +1,26 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: hunivio-postgres
+    container_name: keyloka-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-hunivio_db}
+      POSTGRES_DB: ${POSTGRES_DB:-keyloka_db}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-hunivio_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-keyloka_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   api:
-    image: ${DOCKER_IMAGE:-hunivio-api:latest}
+    image: ${DOCKER_IMAGE:-keyloka-api:latest}
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: hunivio-api
+    container_name: keyloka-api
     restart: unless-stopped
     depends_on:
       postgres:
@@ -31,7 +31,7 @@ services:
       - .env
     environment:
       NODE_ENV: ${NODE_ENV:-production}
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-hunivio_db}}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-keyloka_db}}
     volumes:
       - uploads_data:/app/uploads
       # Uncomment jika file firebase-service-account.json sudah ada di VPS:

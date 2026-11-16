@@ -73,7 +73,7 @@ export class FirebaseNotificationService {
         android: {
           priority: 'high',
           notification: {
-            channelId: 'hunivio_chat_channel',
+            channelId: 'keyloka_chat_channel',
             sound: 'default',
             defaultSound: true,
             visibility: 'public',
@@ -110,7 +110,7 @@ export class FirebaseNotificationService {
         android: {
           priority: 'high',
           notification: {
-            channelId: 'hunivio_chat_channel',
+            channelId: 'keyloka_chat_channel',
             sound: 'default',
             defaultSound: true,
             visibility: 'public',
