@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('chat_messages')
@@ -10,9 +11,11 @@ export class ChatMessage {
   @PrimaryGeneratedColumn()
   id: number;
 
+  @Index()
   @Column({ type: 'int' })
   kostId: number;
 
+  @Index()
   @Column({ type: 'int' })
   senderId: number;
 
@@ -22,6 +25,7 @@ export class ChatMessage {
   @Column({ default: '' })
   senderAvatar: string;
 
+  @Index()
   @Column({ type: 'int' })
   receiverId: number;
 

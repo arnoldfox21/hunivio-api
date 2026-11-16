@@ -11,6 +11,7 @@ import {
   Req,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -42,6 +43,7 @@ export class KostsController {
     @Query('unitType') unitType?: string,
     @Query('type') type?: string,
     @Query('city') city?: string,
+    @Query('district') district?: string,
     @Query('facility') facility?: string,
     @Query('minPrice') minPrice?: string,
     @Query('maxPrice') maxPrice?: string,
@@ -54,12 +56,26 @@ export class KostsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+    const authUser = token ? verifyAuthToken(token) : null;
+    const role = (authUser?.role || '').toUpperCase();
+    const isStaff = role === 'STAFF' || role === 'ADMINISTRATOR';
+    const isOwnFilter =
+      Boolean(authUser?.userId) &&
+      Boolean(ownerId) &&
+      Number(ownerId) === authUser?.userId;
+    const canSeeUnapproved = isStaff || isOwnFilter;
+
     return this.kostsService.findAll({
       search,
       propertyCategory,
       unitType,
       type,
       city,
+      district,
       facility,
       minPrice,
       maxPrice,
@@ -67,11 +83,11 @@ export class KostsController {
       onlyFavorite,
       sortBy,
       ownerId,
-      includePending,
-      approvalStatus,
+      includePending: canSeeUnapproved ? includePending : undefined,
+      approvalStatus: canSeeUnapproved ? approvalStatus : undefined,
       page,
       limit,
-      viewerId: extractOptionalViewerId(req),
+      viewerId: authUser?.userId,
     });
   }
 
@@ -81,12 +97,14 @@ export class KostsController {
     @Query('unitType') unitType?: string,
     @Query('type') type?: string,
     @Query('city') city?: string,
+    @Query('district') district?: string,
   ) {
     return this.kostsService.getMapPoints({
       propertyCategory,
       unitType,
       type,
       city,
+      district,
     });
   }
 
@@ -106,8 +124,23 @@ export class KostsController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
-    return this.kostsService.findOne(id, extractOptionalViewerId(req));
+  async findOne(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+    const authUser = token ? verifyAuthToken(token) : null;
+    const kost = await this.kostsService.findOne(id, authUser?.userId);
+    const approval = (kost.approvalStatus || 'APPROVED').toUpperCase();
+    if (approval !== 'APPROVED') {
+      const role = (authUser?.role || '').toUpperCase();
+      const isStaff = role === 'STAFF' || role === 'ADMINISTRATOR';
+      const isOwner = Boolean(authUser?.userId) && kost.ownerId === authUser?.userId;
+      if (!isStaff && !isOwner) {
+        throw new NotFoundException('Properti tidak ditemukan.');
+      }
+    }
+    return kost;
   }
 
   @UseGuards(JwtAuthGuard)
@@ -182,7 +215,8 @@ export class KostsController {
     };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('PEMILIK_KOST', 'STAFF', 'ADMINISTRATOR')
   @Post()
   create(
     @Body() createKostDto: CreateKostDto,
@@ -218,6 +252,16 @@ export class KostsController {
     );
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Patch(':id/transfer-owner')
+  transferOwner(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { targetOwnerId: number },
+  ) {
+    return this.kostsService.transferOwner(id, Number(body.targetOwnerId));
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
   async update(
@@ -236,7 +280,16 @@ export class KostsController {
         'Anda tidak memiliki izin mengubah properti ini.',
       );
     }
-    return this.kostsService.update(id, updateKostDto);
+    const isStaff = role === 'STAFF' || role === 'ADMINISTRATOR';
+    const payload = { ...updateKostDto };
+    if (!isStaff) {
+      delete payload.allowDirectBooking;
+      delete payload.isVerified;
+      delete payload.ownerId;
+      delete (payload as Record<string, unknown>).approvalStatus;
+      delete (payload as Record<string, unknown>).rejectionReason;
+    }
+    return this.kostsService.update(id, payload);
   }
 
   @UseGuards(JwtAuthGuard)

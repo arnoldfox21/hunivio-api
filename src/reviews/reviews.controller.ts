@@ -12,6 +12,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { ReviewsService } from './reviews.service';
+import { CreateReviewDto } from './dto/create-review.dto';
 import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 
@@ -41,20 +42,14 @@ export class ReviewsController {
   @UseGuards(JwtAuthGuard)
   @Post()
   create(
-    @Body()
-    body: {
-      kostId: number;
-      userId: number;
-      userName: string;
-      userAvatar?: string;
-      ratingCleanliness: number;
-      ratingSecurity: number;
-      ratingAccuracy: number;
-      comment: string;
-    },
+    @Body() body: CreateReviewDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.reviewsService.create({ ...body, userId: req.user.userId });
+    return this.reviewsService.create({
+      ...body,
+      userName: body.userName || 'Penghuni',
+      userId: req.user.userId,
+    });
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

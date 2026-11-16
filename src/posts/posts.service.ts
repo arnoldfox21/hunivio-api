@@ -78,23 +78,38 @@ export class PostsService {
       }
     }
 
-    const [likes, comments] = await Promise.all([
-      this.likeRepository.find({ where: { postId: In(postIds) } }),
-      this.commentRepository.find({ where: { postId: In(postIds) } }),
+    const [likeCountsRaw, commentCountsRaw, viewerLikesRaw] = await Promise.all([
+      this.likeRepository
+        .createQueryBuilder('l')
+        .select('l.postId', 'postId')
+        .addSelect('COUNT(*)', 'cnt')
+        .where('l.postId IN (:...postIds)', { postIds })
+        .groupBy('l.postId')
+        .getRawMany<{ postId: number; cnt: string }>(),
+      this.commentRepository
+        .createQueryBuilder('c')
+        .select('c.postId', 'postId')
+        .addSelect('COUNT(*)', 'cnt')
+        .where('c.postId IN (:...postIds)', { postIds })
+        .groupBy('c.postId')
+        .getRawMany<{ postId: number; cnt: string }>(),
+      viewerId
+        ? this.likeRepository.find({
+            select: ['postId'],
+            where: { postId: In(postIds), userId: viewerId },
+          })
+        : Promise.resolve([] as OwnerPostLike[]),
     ]);
 
     const likeCountMap = new Map<number, number>();
-    const likedPostIds = new Set<number>();
-    for (const l of likes) {
-      likeCountMap.set(l.postId, (likeCountMap.get(l.postId) ?? 0) + 1);
-      if (viewerId && l.userId === viewerId) {
-        likedPostIds.add(l.postId);
-      }
+    for (const row of likeCountsRaw) {
+      likeCountMap.set(Number(row.postId), Number(row.cnt) || 0);
     }
+    const likedPostIds = new Set<number>(viewerLikesRaw.map((l) => l.postId));
 
     const commentCountMap = new Map<number, number>();
-    for (const c of comments) {
-      commentCountMap.set(c.postId, (commentCountMap.get(c.postId) ?? 0) + 1);
+    for (const row of commentCountsRaw) {
+      commentCountMap.set(Number(row.postId), Number(row.cnt) || 0);
     }
 
     return posts.map((post) => {
@@ -123,6 +138,7 @@ export class PostsService {
     const posts = await this.postRepository.find({
       where: { ownerId },
       order: { createdAt: 'DESC', id: 'DESC' },
+      take: 30,
     });
     return this.attachKostMetadata(posts, viewerId);
   }

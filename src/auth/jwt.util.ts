@@ -7,10 +7,12 @@ export interface AuthUserPayload {
 }
 
 function getJwtSecret(): string {
-  return (
-    process.env.JWT_SECRET?.trim() ||
-    'hunivio_dev_only_fallback_secret_change_in_prod'
-  );
+  const secret = process.env.JWT_SECRET?.trim();
+  if (secret) return secret;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET wajib dikonfigurasi di environment production.');
+  }
+  return 'hunivio_dev_only_fallback_secret_change_in_prod';
 }
 
 export function signAuthToken(payload: AuthUserPayload): string {

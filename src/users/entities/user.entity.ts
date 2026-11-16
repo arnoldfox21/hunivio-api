@@ -62,6 +62,18 @@ export class User {
   @Column({ type: 'text', default: '' })
   fcmToken: string;
 
+  @Column({ type: 'int', default: 0 })
+  creditBalance: number;
+
+  @Column({ type: 'int', default: 0 })
+  payoutBalance: number;
+
+  @Column({ type: 'int', default: 0 })
+  pointsBalance: number;
+
+  @Column({ type: 'int', default: 0 })
+  totalPointsEarned: number;
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   lastLoginAt: Date;
 

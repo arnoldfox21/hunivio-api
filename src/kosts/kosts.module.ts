@@ -7,11 +7,13 @@ import { User } from '../users/entities/user.entity';
 import { KostsService } from './kosts.service';
 import { KostsController } from './kosts.controller';
 import { ChatsModule } from '../chats/chats.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Kost, Facility, UserFavorite, User]),
     ChatsModule,
+    WalletModule,
   ],
   controllers: [KostsController],
   providers: [KostsService],

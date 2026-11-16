@@ -5,6 +5,7 @@ import { Kost } from './kosts/entities/kost.entity';
 import { Facility } from './kosts/entities/facility.entity';
 import { UserFavorite } from './kosts/entities/user-favorite.entity';
 import { Booking } from './bookings/entities/booking.entity';
+import { PointTransaction } from './bookings/entities/point-transaction.entity';
 import { User } from './users/entities/user.entity';
 import { ChatMessage } from './chats/entities/chat-message.entity';
 import { KostGroupMessage } from './chats/entities/kost-group-message.entity';
@@ -15,6 +16,8 @@ import { OwnerPost } from './posts/entities/owner-post.entity';
 import { OwnerPostComment } from './posts/entities/owner-post-comment.entity';
 import { OwnerPostLike } from './posts/entities/owner-post-like.entity';
 import { Region } from './locations/entities/region.entity';
+import { WalletTransaction } from './wallet/entities/wallet-transaction.entity';
+import { PayoutRequest } from './wallet/entities/payout-request.entity';
 import { KostsModule } from './kosts/kosts.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { UsersModule } from './users/users.module';
@@ -22,6 +25,7 @@ import { ChatsModule } from './chats/chats.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { PostsModule } from './posts/posts.module';
 import { LocationsModule } from './locations/locations.module';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
@@ -39,6 +43,7 @@ import { LocationsModule } from './locations/locations.module';
               Facility,
               UserFavorite,
               Booking,
+              PointTransaction,
               User,
               ChatMessage,
               KostGroupMessage,
@@ -49,8 +54,12 @@ import { LocationsModule } from './locations/locations.module';
               OwnerPostComment,
               OwnerPostLike,
               Region,
+              WalletTransaction,
+              PayoutRequest,
             ],
-            synchronize: true,
+            synchronize:
+              process.env.DB_SYNCHRONIZE === 'true' ||
+              process.env.NODE_ENV !== 'production',
           }
         : {
             type: 'postgres',
@@ -64,6 +73,7 @@ import { LocationsModule } from './locations/locations.module';
               Facility,
               UserFavorite,
               Booking,
+              PointTransaction,
               User,
               ChatMessage,
               KostGroupMessage,
@@ -74,8 +84,12 @@ import { LocationsModule } from './locations/locations.module';
               OwnerPostComment,
               OwnerPostLike,
               Region,
+              WalletTransaction,
+              PayoutRequest,
             ],
-            synchronize: true,
+            synchronize:
+              process.env.DB_SYNCHRONIZE === 'true' ||
+              process.env.NODE_ENV !== 'production',
           },
     ),
     KostsModule,
@@ -85,6 +99,7 @@ import { LocationsModule } from './locations/locations.module';
     ReviewsModule,
     PostsModule,
     LocationsModule,
+    WalletModule,
   ],
 })
 export class AppModule {}

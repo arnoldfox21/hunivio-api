@@ -59,11 +59,20 @@ export class ChatsService {
         'Anda tidak dapat mengirim pesan ke properti milik sendiri',
       );
     }
+    let resolvedName = payload.senderName || 'Pengguna';
+    let resolvedAvatar = payload.senderAvatar || '';
+    if (payload.senderId > 0) {
+      const sender = await this.userRepository.findOne({
+        where: { id: payload.senderId },
+      });
+      if (sender?.name?.trim()) resolvedName = sender.name.trim();
+      if (sender?.avatarUrl?.trim()) resolvedAvatar = sender.avatarUrl.trim();
+    }
     const msg = this.chatRepository.create({
       kostId: payload.kostId,
       senderId: payload.senderId,
-      senderName: payload.senderName || 'Pengguna',
-      senderAvatar: payload.senderAvatar || '',
+      senderName: resolvedName,
+      senderAvatar: resolvedAvatar,
       receiverId: payload.receiverId || 1,
       message: text,
       status: 'SENT',
@@ -305,11 +314,16 @@ export class ChatsService {
     });
 
     const kostIds = new Set<number>(ownedKosts.map((k) => k.id));
-    const allSettings = await this.groupSettingRepository.find();
-    for (const s of allSettings) {
-      const added = (s.addedUserIds || []).filter((x) => x !== '');
+    const uidStr = String(userId);
+    const matchingSettings = await this.groupSettingRepository
+      .createQueryBuilder('setting')
+      .where(':uid = ANY(string_to_array(setting.addedUserIds, \',\'))', {
+        uid: uidStr,
+      })
+      .getMany();
+    for (const s of matchingSettings) {
       const removed = (s.removedUserIds || []).filter((x) => x !== '');
-      if (added.includes(String(userId)) && !removed.includes(String(userId))) {
+      if (!removed.includes(uidStr)) {
         kostIds.add(s.kostId);
       }
     }

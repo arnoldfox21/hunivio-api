@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import {
   Injectable,
+  OnModuleInit,
   BadRequestException,
   ForbiddenException,
   NotFoundException,
@@ -29,11 +30,37 @@ export const GOOGLE_OAUTH_CONFIG = {
 };
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
+
+  async onModuleInit() {
+    await this._ensureDefaultStaffPartner();
+  }
+
+  private async _ensureDefaultStaffPartner() {
+    const email = 'partner.malang@hunivio.id';
+    const existing = await this.userRepository.findOne({ where: { email } });
+    if (existing) return;
+    const partner = this.userRepository.create({
+      googleId: 'staff_partner_malang',
+      email,
+      name: 'HuniVio Partner Malang',
+      username: 'huniviopartnermalang',
+      avatarUrl:
+        'https://ui-avatars.com/api/?name=HuniVio+Partner+Malang&background=1BAA56&color=ffffff&size=256&bold=true&format=png',
+      phone: '6281234567890',
+      showWhatsapp: true,
+      bio: 'Pengelola & kurator properti resmi HuniVio area Malang Raya. Siap membantu jadwal survei dan info ketersediaan unit.',
+      city: 'Kota Malang',
+      role: 'STAFF',
+      onboardingCompleted: true,
+      passwordHash: this._hashPassword('HuniVio2026!'),
+    });
+    await this.userRepository.save(partner);
+  }
 
   sanitizeUser(user: User, includePrivate = false) {
     const base = {
@@ -68,7 +95,19 @@ export class UsersService {
       email: user.email,
       phone: user.phone,
       hasPassword: Boolean(user.passwordHash),
+      creditBalance: Number(user.creditBalance ?? 0),
+      payoutBalance: Number(user.payoutBalance ?? 0),
+      pointsBalance: Number(user.pointsBalance ?? 0),
+      totalPointsEarned: Number(user.totalPointsEarned ?? 0),
+      loyaltyLevel: this._computeLoyaltyLevel(Number(user.totalPointsEarned ?? 0)),
     };
+  }
+
+  private _computeLoyaltyLevel(totalPoints: number): string {
+    if (totalPoints >= 700) return 'Platinum';
+    if (totalPoints >= 300) return 'Gold';
+    if (totalPoints >= 100) return 'Silver';
+    return 'Bronze';
   }
 
   private _hashPassword(password: string): string {
@@ -280,10 +319,35 @@ export class UsersService {
     };
   }
 
-  async findAll(): Promise<User[]> {
-    return this.userRepository.find({
-      order: { id: 'ASC' },
-    });
+  async findAll(query?: {
+    search?: string;
+    role?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<User[]> {
+    const qb = this.userRepository
+      .createQueryBuilder('user')
+      .orderBy('user.id', 'ASC');
+
+    if (query?.role && query.role.trim() !== '' && query.role !== 'SEMUA') {
+      qb.andWhere('UPPER(user.role) = :role', {
+        role: query.role.trim().toUpperCase(),
+      });
+    }
+
+    if (query?.search && query.search.trim() !== '') {
+      const s = `%${query.search.trim().toLowerCase()}%`;
+      qb.andWhere(
+        '(LOWER(user.name) LIKE :s OR LOWER(user.email) LIKE :s OR LOWER(user.phone) LIKE :s)',
+        { s },
+      );
+    }
+
+    const limit = Math.min(50, Math.max(1, query?.limit || 20));
+    const page = Math.max(1, query?.page || 1);
+    qb.skip((page - 1) * limit).take(limit);
+
+    return qb.getMany();
   }
 
   async findOne(id: number): Promise<User> {
@@ -294,8 +358,25 @@ export class UsersService {
     return user;
   }
 
-  async updateProfile(id: number, dto: UpdateUserDto): Promise<User> {
+  async updateProfile(
+    id: number,
+    dto: UpdateUserDto,
+    requesterId?: number,
+    requesterRole?: string,
+  ): Promise<User> {
     const user = await this.findOne(id);
+    const reqRole = (requesterRole || '').toUpperCase();
+    const targetRole = (user.role || '').toUpperCase();
+    if (
+      requesterId &&
+      requesterId !== id &&
+      reqRole === 'STAFF' &&
+      (targetRole === 'STAFF' || targetRole === 'ADMINISTRATOR')
+    ) {
+      throw new ForbiddenException(
+        'Staff hanya dapat mengelola akun Penyewa atau Pemilik Kost.',
+      );
+    }
     if (dto.name !== undefined && dto.name.trim().length > 0) {
       user.name = dto.name.trim();
     }
@@ -339,12 +420,9 @@ export class UsersService {
       where: { id: dto.requesterId },
     });
     const requesterRole = (requester?.role || '').toUpperCase();
-    if (
-      !requester ||
-      (requesterRole !== 'STAFF' && requesterRole !== 'ADMINISTRATOR')
-    ) {
+    if (!requester || requesterRole !== 'ADMINISTRATOR') {
       throw new ForbiddenException(
-        'Hanya Staff atau Administrator yang dapat mengubah peran pengguna.',
+        'Hanya Administrator yang dapat mengubah peran pengguna.',
       );
     }
 
@@ -440,6 +518,7 @@ export class UsersService {
     id: number,
     isBanned: boolean,
     requesterId: number,
+    requesterRole?: string,
   ): Promise<User> {
     if (id === 1) {
       throw new ForbiddenException(
@@ -452,6 +531,16 @@ export class UsersService {
       );
     }
     const user = await this.findOne(id);
+    const reqRole = (requesterRole || '').toUpperCase();
+    const targetRole = (user.role || '').toUpperCase();
+    if (
+      reqRole === 'STAFF' &&
+      (targetRole === 'STAFF' || targetRole === 'ADMINISTRATOR')
+    ) {
+      throw new ForbiddenException(
+        'Staff hanya dapat mem-banned akun Penyewa atau Pemilik Kost.',
+      );
+    }
     user.isBanned = isBanned;
     user.bannedAt = isBanned ? new Date() : null;
     if (isBanned) {
@@ -460,13 +549,25 @@ export class UsersService {
     return this.userRepository.save(user);
   }
 
-  async remove(id: number): Promise<{ deleted: boolean; id: number }> {
+  async remove(
+    id: number,
+    requesterId?: number,
+  ): Promise<{ deleted: boolean; id: number }> {
     if (id === 1) {
       throw new BadRequestException(
         'Administrator utama (ID 1) tidak dapat dihapus',
       );
     }
     const user = await this.findOne(id);
+    if (
+      requesterId &&
+      requesterId !== id &&
+      (user.role || '').toUpperCase() === 'ADMINISTRATOR'
+    ) {
+      throw new ForbiddenException(
+        'Akun Administrator lain tidak dapat dihapus.',
+      );
+    }
     await this.userRepository.remove(user);
     return { deleted: true, id };
   }

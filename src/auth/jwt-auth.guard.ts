@@ -44,13 +44,16 @@ export class JwtAuthGuard implements CanActivate {
 
     if (this.dataSource) {
       const rows = (await this.dataSource.query(
-        'SELECT "isBanned" FROM users WHERE id = $1 LIMIT 1',
+        'SELECT "isBanned", "role" FROM users WHERE id = $1 LIMIT 1',
         [payload.userId],
-      )) as Array<{ isBanned?: boolean }>;
+      )) as Array<{ isBanned?: boolean; role?: string }>;
       if (rows.length === 0 || rows[0]?.isBanned === true) {
         throw new UnauthorizedException(
           'Akun Anda telah dibanned. Sesi Anda dihentikan.',
         );
+      }
+      if (rows[0]?.role) {
+        payload.role = String(rows[0].role).toUpperCase();
       }
     }
 

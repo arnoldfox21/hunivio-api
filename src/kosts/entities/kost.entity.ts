@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('kosts')
@@ -17,12 +18,14 @@ export class Kost {
   @Column({ unique: true })
   slug: string;
 
+  @Index()
   @Column({ default: 'KOST' })
   propertyCategory: string; // 'KOST' | 'APARTEMEN' | 'KONTRAKAN' | 'HUNIAN_HARIAN'
 
   @Column({ default: 'Campur' })
   type: string; // 'Putra' | 'Putri' | 'Campur' | 'Umum'
 
+  @Index()
   @Column()
   city: string;
 
@@ -95,11 +98,14 @@ export class Kost {
   @Column({ default: false })
   electricityIncluded: boolean;
 
-  @Column({ default: true })
+  @Column({ default: false })
   isSinggahsini: boolean;
 
   @Column({ default: true })
   isInstantBooking: boolean;
+
+  @Column({ default: false })
+  allowDirectBooking: boolean;
 
   @Column({ type: 'jsonb', default: [] })
   roomFacilities: string[];
@@ -119,6 +125,7 @@ export class Kost {
   @Column({ default: '6281234567890' })
   ownerPhone: string;
 
+  @Index()
   @Column({ type: 'int', default: 1 })
   ownerId: number;
 
@@ -134,11 +141,19 @@ export class Kost {
   @Column({ default: false })
   isFavorite: boolean;
 
+  @Index()
   @Column({ default: 'APPROVED' })
   approvalStatus: string; // 'PENDING' | 'APPROVED' | 'REJECTED'
 
   @Column({ type: 'text', default: '' })
   rejectionReason: string;
+
+  @Index()
+  @Column({ type: 'timestamp', nullable: true })
+  boostedUntil: Date | null;
+
+  @Column({ type: 'varchar', length: 32, default: '' })
+  boostTier: string;
 
   @CreateDateColumn()
   createdAt: Date;

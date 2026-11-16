@@ -4,18 +4,22 @@ import {
   SubscribeMessage,
   MessageBody,
   ConnectedSocket,
+  OnGatewayConnection,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { ChatsService } from './chats.service';
 import { UsersService } from '../users/users.service';
 import { FirebaseNotificationService } from './firebase-notification.service';
+import { verifyAuthToken } from '../auth/jwt.util';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: process.env.CORS_ORIGIN?.trim()
+      ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+      : '*',
   },
 })
-export class ChatsGateway {
+export class ChatsGateway implements OnGatewayConnection {
   @WebSocketServer()
   server: Server;
 
@@ -25,13 +29,48 @@ export class ChatsGateway {
     private readonly firebaseNotificationService: FirebaseNotificationService,
   ) {}
 
+  async handleConnection(client: Socket) {
+    try {
+      const authToken =
+        typeof client.handshake.auth?.token === 'string'
+          ? client.handshake.auth.token
+          : '';
+      const headerAuth =
+        typeof client.handshake.headers?.authorization === 'string'
+          ? client.handshake.headers.authorization
+          : '';
+      const rawToken =
+        authToken ||
+        (headerAuth.startsWith('Bearer ') ? headerAuth.slice(7).trim() : '');
+      const payload = rawToken ? verifyAuthToken(rawToken) : null;
+      if (!payload) {
+        client.disconnect(true);
+        return;
+      }
+      const user = await this.usersService.findOne(payload.userId);
+      if (user.isBanned) {
+        client.disconnect(true);
+        return;
+      }
+      client.data.userId = user.id;
+      client.data.role = (user.role || 'PENYEWA').toUpperCase();
+    } catch {
+      client.disconnect(true);
+    }
+  }
+
+  private _getSocketUserId(client: Socket): number | null {
+    const uid = Number(client.data?.userId);
+    return Number.isFinite(uid) && uid > 0 ? uid : null;
+  }
+
   @SubscribeMessage('joinUserRoom')
   async handleJoinUserRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { userId: number },
+    @MessageBody() _payload: { userId?: number },
   ) {
-    const userId = payload?.userId;
-    if (!userId || userId <= 0) return { joined: false };
+    const userId = this._getSocketUserId(client);
+    if (!userId) return { joined: false };
 
     client.join(`user_${userId}`);
     const deliveredGroups =
@@ -56,16 +95,12 @@ export class ChatsGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { kostId: number; userId?: number },
   ) {
-    if (payload?.kostId) {
-      client.join(`kost_${payload.kostId}`);
-    }
-    if (payload?.userId && payload.userId > 0) {
-      client.join(`user_${payload.userId}`);
-      if (payload?.kostId) {
-        await this.emitMarkAsRead(payload.kostId, payload.userId);
-      }
-    }
-    return { joined: true, room: `kost_${payload?.kostId}` };
+    const userId = this._getSocketUserId(client);
+    if (!userId || !payload?.kostId) return { joined: false };
+    client.join(`kost_${payload.kostId}`);
+    client.join(`user_${userId}`);
+    await this.emitMarkAsRead(payload.kostId, userId);
+    return { joined: true, room: `kost_${payload.kostId}` };
   }
 
   @SubscribeMessage('leaveKostChat')
@@ -81,12 +116,14 @@ export class ChatsGateway {
 
   @SubscribeMessage('markAsRead')
   async handleMarkAsRead(
-    @MessageBody() payload: { kostId: number; readerId: number },
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { kostId: number; readerId?: number },
   ) {
-    if (!payload?.kostId || !payload?.readerId) {
+    const readerId = this._getSocketUserId(client);
+    if (!payload?.kostId || !readerId) {
       return { updated: false };
     }
-    return this.emitMarkAsRead(payload.kostId, payload.readerId);
+    return this.emitMarkAsRead(payload.kostId, readerId);
   }
 
   async emitMarkAsRead(kostId: number, readerId: number) {
@@ -108,17 +145,23 @@ export class ChatsGateway {
 
   @SubscribeMessage('sendMessage')
   async handleSendMessage(
+    @ConnectedSocket() client: Socket,
     @MessageBody()
     payload: {
       kostId: number;
-      senderId: number;
+      senderId?: number;
       senderName: string;
       senderAvatar?: string;
       receiverId: number;
       message: string;
     },
   ) {
-    const saved = await this.chatsService.createMessage(payload);
+    const senderId = this._getSocketUserId(client);
+    if (!senderId) return null;
+    const saved = await this.chatsService.createMessage({
+      ...payload,
+      senderId,
+    });
     return this.notifyNewChatMessage(saved);
   }
 
@@ -145,14 +188,16 @@ export class ChatsGateway {
 
     this.server.to(`kost_${saved.kostId}`).emit('newMessage', latest);
     this.server.to(`user_${saved.receiverId}`).emit('newMessage', latest);
-    this.server.emit('inboxUpdated', {
+    const inboxPayload = {
       kostId: saved.kostId,
       senderId: saved.senderId,
       receiverId: saved.receiverId,
       lastMessage: latest.message,
       status: latest.status,
       createdAt: latest.createdAt,
-    });
+    };
+    this.server.to(`user_${saved.senderId}`).emit('inboxUpdated', inboxPayload);
+    this.server.to(`user_${saved.receiverId}`).emit('inboxUpdated', inboxPayload);
 
     // Kirim FCM push notification ke HP penerima
     try {
@@ -177,13 +222,14 @@ export class ChatsGateway {
   @SubscribeMessage('joinGroupChat')
   async handleJoinGroupChat(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { kostId: number; userId: number },
+    @MessageBody() payload: { kostId: number; userId?: number },
   ) {
-    if (!payload?.kostId || !payload?.userId) return { joined: false };
+    const userId = this._getSocketUserId(client);
+    if (!payload?.kostId || !userId) return { joined: false };
     try {
-      await this.chatsService.verifyGroupAccess(payload.kostId, payload.userId);
+      await this.chatsService.verifyGroupAccess(payload.kostId, userId);
       client.join(`kost_group_${payload.kostId}`);
-      client.join(`user_${payload.userId}`);
+      client.join(`user_${userId}`);
       return { joined: true, room: `kost_group_${payload.kostId}` };
     } catch (_) {
       return { joined: false };
@@ -203,18 +249,24 @@ export class ChatsGateway {
 
   @SubscribeMessage('sendGroupMessage')
   async handleSendGroupMessage(
+    @ConnectedSocket() client: Socket,
     @MessageBody()
     payload: {
       kostId: number;
-      senderId: number;
+      senderId?: number;
       senderName: string;
       senderAvatar?: string;
       message: string;
     },
   ) {
-    const saved = await this.chatsService.createGroupMessage(payload);
+    const senderId = this._getSocketUserId(client);
+    if (!senderId) return null;
+    const saved = await this.chatsService.createGroupMessage({
+      ...payload,
+      senderId,
+    });
     this.server.to(`kost_group_${payload.kostId}`).emit('newGroupMessage', saved);
-    this.server.emit('inboxUpdated', {
+    this.server.to(`kost_group_${payload.kostId}`).emit('inboxUpdated', {
       kostId: payload.kostId,
       isGroup: true,
       lastMessage: saved.message,
@@ -225,10 +277,10 @@ export class ChatsGateway {
     try {
       const members = await this.chatsService.getGroupMembers(payload.kostId);
       for (const m of members) {
-        if (m.userId === payload.senderId) continue;
+        if (m.userId === senderId) continue;
         this.server.to(`user_${m.userId}`).emit('newGroupNotification', {
           kostId: payload.kostId,
-          senderId: payload.senderId,
+          senderId,
           senderName: saved.senderName,
           message: saved.message,
           messageId: saved.id,
@@ -254,17 +306,20 @@ export class ChatsGateway {
 
   @SubscribeMessage('updateGroupSettings')
   async handleUpdateGroupSettings(
+    @ConnectedSocket() client: Socket,
     @MessageBody()
     payload: {
       kostId: number;
-      userId: number;
+      userId?: number;
       adminOnly?: boolean;
       pinnedMessageId?: number | null;
     },
   ) {
+    const userId = this._getSocketUserId(client);
+    if (!userId) return null;
     const updated = await this.chatsService.updateGroupSettings(
       payload.kostId,
-      payload.userId,
+      userId,
       payload,
     );
     this.server
@@ -275,12 +330,15 @@ export class ChatsGateway {
 
   @SubscribeMessage('deleteGroupMessage')
   async handleDeleteGroupMessage(
+    @ConnectedSocket() client: Socket,
     @MessageBody()
-    payload: { kostId: number; userId: number; messageId: number },
+    payload: { kostId: number; userId?: number; messageId: number },
   ) {
+    const userId = this._getSocketUserId(client);
+    if (!userId) return null;
     const res = await this.chatsService.deleteGroupMessage(
       payload.kostId,
-      payload.userId,
+      userId,
       payload.messageId,
     );
     this.server

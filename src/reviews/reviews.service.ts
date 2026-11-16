@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Review } from './entities/review.entity';
 import { ReviewReport } from './entities/review-report.entity';
 import { KostsService } from '../kosts/kosts.service';
@@ -74,6 +74,14 @@ export class ReviewsService {
     if (!payload.comment?.trim()) {
       throw new BadRequestException('Komentar ulasan wajib diisi');
     }
+    const ratings = [
+      Number(payload.ratingCleanliness),
+      Number(payload.ratingSecurity),
+      Number(payload.ratingAccuracy),
+    ];
+    if (ratings.some((r) => !Number.isFinite(r) || r < 1 || r > 5)) {
+      throw new BadRequestException('Nilai rating harus berada di antara 1 sampai 5.');
+    }
 
     const kost = await this.kostsService.findOne(payload.kostId);
     if (kost.ownerId === payload.userId) {
@@ -100,11 +108,21 @@ export class ReviewsService {
       ).toFixed(1),
     );
 
+    let resolvedName = payload.userName || 'Penghuni';
+    let resolvedAvatar = payload.userAvatar || '';
+    try {
+      const author = await this.usersService.findOne(payload.userId);
+      if (author.name && author.name.trim()) resolvedName = author.name.trim();
+      if (author.avatarUrl && author.avatarUrl.trim()) {
+        resolvedAvatar = author.avatarUrl.trim();
+      }
+    } catch (_) {}
+
     const review = this.reviewRepository.create({
       kostId: payload.kostId,
       userId: payload.userId,
-      userName: payload.userName || 'Penghuni',
-      userAvatar: payload.userAvatar || '',
+      userName: resolvedName,
+      userAvatar: resolvedAvatar,
       ratingCleanliness: payload.ratingCleanliness,
       ratingSecurity: payload.ratingSecurity,
       ratingAccuracy: payload.ratingAccuracy,
@@ -260,9 +278,20 @@ export class ReviewsService {
     const reports = await this.reviewReportRepository.find({
       where: { status: 'OPEN' },
       order: { createdAt: 'DESC' },
+      take: 50,
     });
+    if (reports.length === 0) return [];
+
+    const reviewIds = Array.from(new Set(reports.map((r) => r.reviewId)));
+    const reviews = await this.reviewRepository.find({
+      where: { id: In(reviewIds) },
+    });
+    const reviewMap = new Map(reviews.map((rev) => [rev.id, rev]));
+
+    const kostIds = Array.from(new Set(reports.map((r) => r.kostId)));
     const kostNameCache = new Map<number, string>();
-    const reviewCache = new Map<number, Review | null>();
+    await Promise.all(kostIds.map((kid) => this.getKostName(kid, kostNameCache)));
+
     const result: Array<
       ReviewReport & {
         kostName: string;
@@ -273,17 +302,11 @@ export class ReviewsService {
     > = [];
 
     for (const report of reports) {
-      let review = reviewCache.get(report.reviewId);
-      if (review === undefined) {
-        review = await this.reviewRepository.findOne({
-          where: { id: report.reviewId },
-        });
-        reviewCache.set(report.reviewId, review);
-      }
+      const review = reviewMap.get(report.reviewId);
       if (!review) {
         continue;
       }
-      const kostName = await this.getKostName(report.kostId, kostNameCache);
+      const kostName = kostNameCache.get(report.kostId) || `Kost #${report.kostId}`;
       result.push(
         Object.assign(report, {
           kostName,

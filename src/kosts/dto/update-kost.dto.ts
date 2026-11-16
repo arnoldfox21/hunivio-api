@@ -117,6 +117,10 @@ export class UpdateKostDto {
   isInstantBooking?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  allowDirectBooking?: boolean;
+
+  @IsOptional()
   @IsArray()
   roomFacilities?: string[];
 

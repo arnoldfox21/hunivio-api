@@ -6,7 +6,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { Kost } from './entities/kost.entity';
 import { Facility } from './entities/facility.entity';
 import { UserFavorite } from './entities/user-favorite.entity';
@@ -19,6 +19,11 @@ import {
   buildMalangDailyStays,
 } from './malang-kosts.seed';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
+import {
+  EXTRA_PROPERTY_SLOT_FEE,
+  FREE_PROPERTY_QUOTA,
+  WalletService,
+} from '../wallet/wallet.service';
 
 @Injectable()
 export class KostsService implements OnModuleInit {
@@ -32,6 +37,8 @@ export class KostsService implements OnModuleInit {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly firebaseNotificationService: FirebaseNotificationService,
+    private readonly walletService: WalletService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async onModuleInit() {
@@ -196,6 +203,7 @@ export class KostsService implements OnModuleInit {
     unitType?: string;
     type?: string;
     city?: string;
+    district?: string;
     facility?: string;
     minPrice?: string;
     maxPrice?: string;
@@ -291,6 +299,12 @@ export class KostsService implements OnModuleInit {
       qb.andWhere('LOWER(kost.city) = LOWER(:city)', { city: query.city });
     }
 
+    if (query.district && query.district !== 'Semua Area') {
+      qb.andWhere('LOWER(kost.district) = LOWER(:district)', {
+        district: query.district,
+      });
+    }
+
     const effectivePriceExpr =
       "CASE WHEN UPPER(kost.propertyCategory) = 'HUNIAN_HARIAN' THEN COALESCE(NULLIF(kost.pricePerDay, 0), kost.pricePerMonth) ELSE kost.pricePerMonth END";
 
@@ -327,14 +341,33 @@ export class KostsService implements OnModuleInit {
           .orderBy('effective_price', 'DESC');
         break;
       case 'rating_desc':
-        qb.orderBy('kost.rating', 'DESC');
+        qb.orderBy('kost.rating', 'DESC').addOrderBy('kost.reviewCount', 'DESC');
         break;
-      default:
-        qb.orderBy('kost.isSinggahsini', 'DESC').addOrderBy(
-          'kost.rating',
-          'DESC',
-        );
+      case 'newest':
+        qb.orderBy('kost.createdAt', 'DESC');
         break;
+      default: {
+        const recommendationScoreExpr =
+          '(COALESCE(kost.rating, 0) * LN(GREATEST(COALESCE(kost.reviewCount, 0), 0) + 2))' +
+          ' + (CASE WHEN kost.discountPercent > 0 THEN 1.5 ELSE 0 END)' +
+          ' + (CASE WHEN jsonb_array_length(kost.images) > 0 THEN 1.0 ELSE 0 END)' +
+          ' + (CASE WHEN kost.latitude IS NOT NULL AND kost.longitude IS NOT NULL THEN 0.5 ELSE 0 END)' +
+          " + (CASE WHEN kost.createdAt >= NOW() - INTERVAL '14 days' THEN 1.0 ELSE 0 END)";
+        qb.addSelect(
+          'CASE WHEN kost.boostedUntil IS NOT NULL AND kost.boostedUntil > NOW() THEN 1 ELSE 0 END',
+          'is_boosted',
+        )
+          .addSelect(
+            'CASE WHEN kost.availableRooms > 0 THEN 1 ELSE 0 END',
+            'has_rooms',
+          )
+          .addSelect(recommendationScoreExpr, 'recommendation_score')
+          .orderBy('is_boosted', 'DESC')
+          .addOrderBy('kost.boostedUntil', 'DESC', 'NULLS LAST')
+          .addOrderBy('has_rooms', 'DESC')
+          .addOrderBy('recommendation_score', 'DESC');
+        break;
+      }
     }
 
     if (query.page || query.limit) {
@@ -382,7 +415,7 @@ export class KostsService implements OnModuleInit {
     return kosts;
   }
 
-  private async syncOwnerNames(kosts: Kost[]): Promise<Kost[]> {
+  async syncOwnerNames(kosts: Kost[]): Promise<Kost[]> {
     if (kosts.length === 0) return kosts;
     const ownerIds = Array.from(
       new Set(kosts.map((k) => k.ownerId).filter((id) => id > 0)),
@@ -412,6 +445,7 @@ export class KostsService implements OnModuleInit {
     unitType?: string;
     type?: string;
     city?: string;
+    district?: string;
   }) {
     const qb = this.kostRepository
       .createQueryBuilder('kost')
@@ -467,6 +501,12 @@ export class KostsService implements OnModuleInit {
     if (query.city && query.city !== 'Semua Kota') {
       qb.andWhere('LOWER(kost.city) = LOWER(:city)', { city: query.city });
     }
+
+    if (query.district && query.district !== 'Semua Area') {
+      qb.andWhere('LOWER(kost.district) = LOWER(:district)', {
+        district: query.district,
+      });
+    }
     const list = await qb.getMany();
     return this.syncOwnerNames(list);
   }
@@ -485,17 +525,52 @@ export class KostsService implements OnModuleInit {
     return raw.map((r) => ({ city: r.city, count: Number(r.count) }));
   }
 
+  private _filtersCache: {
+    expiresAt: number;
+    data: {
+      cities: string[];
+      types: string[];
+      facilities: string[];
+      cityStats: Array<{
+        city: string;
+        count: number;
+        districts: Array<{ district: string; count: number }>;
+      }>;
+    };
+  } | null = null;
+
   async getFilters() {
-    const allKosts = await this.kostRepository.find({
-      where: { approvalStatus: 'APPROVED' },
-    });
+    if (this._filtersCache && Date.now() < this._filtersCache.expiresAt) {
+      return this._filtersCache.data;
+    }
+
+    const allKosts = await this.kostRepository
+      .createQueryBuilder('kost')
+      .select([
+        'kost.city',
+        'kost.district',
+        'kost.type',
+        'kost.roomFacilities',
+        'kost.publicFacilities',
+      ])
+      .where('kost.approvalStatus = :status', { status: 'APPROVED' })
+      .getMany();
     const cityCounts = new Map<string, number>();
+    const cityDistrictCounts = new Map<string, Map<string, number>>();
     const typesSet = new Set<string>();
     const facilitiesCount = new Map<string, number>();
 
     for (const k of allKosts) {
       if (k.city) {
         cityCounts.set(k.city, (cityCounts.get(k.city) || 0) + 1);
+        if (k.district) {
+          let distMap = cityDistrictCounts.get(k.city);
+          if (!distMap) {
+            distMap = new Map<string, number>();
+            cityDistrictCounts.set(k.city, distMap);
+          }
+          distMap.set(k.district, (distMap.get(k.district) || 0) + 1);
+        }
       }
       if (k.type) {
         typesSet.add(k.type);
@@ -514,17 +589,33 @@ export class KostsService implements OnModuleInit {
       .sort((a, b) => b[1] - a[1])
       .map(([city]) => city);
 
+    const cityStats = Array.from(cityCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([city, count]) => {
+        const distMap = cityDistrictCounts.get(city) || new Map<string, number>();
+        const districts = Array.from(distMap.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([district, distCount]) => ({ district, count: distCount }));
+        return { city, count, districts };
+      });
+
     const types = Array.from(typesSet);
 
     const facilities = Array.from(facilitiesCount.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([fac]) => fac);
 
-    return {
+    const result = {
       cities,
       types,
       facilities,
+      cityStats,
     };
+    this._filtersCache = {
+      expiresAt: Date.now() + 60_000,
+      data: result,
+    };
+    return result;
   }
 
   async toggleFavorite(id: number, userId: number): Promise<Kost> {
@@ -567,16 +658,62 @@ export class KostsService implements OnModuleInit {
     const creatorRole = (creator?.role || '').toUpperCase();
     const isAutoApproved =
       creatorRole === 'ADMINISTRATOR' || creatorRole === 'STAFF';
-    const kost = this.kostRepository.create({
-      ...dto,
-      ownerId,
-      ownerName: creator?.name?.trim() || dto.ownerName || 'Pengelola Kost',
-      ownerPhone: creator?.phone?.trim() || dto.ownerPhone || '6281234567890',
-      slug,
-      approvalStatus: isAutoApproved ? 'APPROVED' : 'PENDING',
-      rejectionReason: '',
+
+    return this.dataSource.transaction(async (manager) => {
+      const kostRepo = manager.getRepository(Kost);
+      const existingCount = await kostRepo.count({ where: { ownerId } });
+
+      if (!isAutoApproved && existingCount >= FREE_PROPERTY_QUOTA) {
+        await this.walletService.deductCredit({
+          userId: ownerId,
+          amount: EXTRA_PROPERTY_SLOT_FEE,
+          type: 'SLOT_FEE',
+          description: `Aktivasi Slot Properti ke-${existingCount + 1} — ${dto.name}`,
+          manager,
+        });
+      }
+
+      const kost = kostRepo.create({
+        ...dto,
+        ownerId,
+        ownerName: creator?.name?.trim() || dto.ownerName || 'Pengelola Kost',
+        ownerPhone:
+          creator?.phone?.trim() || dto.ownerPhone || '6281234567890',
+        slug,
+        approvalStatus: isAutoApproved ? 'APPROVED' : 'PENDING',
+        allowDirectBooking: isAutoApproved
+          ? Boolean(dto.allowDirectBooking)
+          : false,
+        rejectionReason: '',
+      });
+      return kostRepo.save(kost);
     });
-    return this.kostRepository.save(kost);
+  }
+
+  async transferOwner(id: number, targetOwnerId: number): Promise<Kost> {
+    if (!targetOwnerId || targetOwnerId <= 0) {
+      throw new BadRequestException('ID pemilik tujuan tidak valid.');
+    }
+    const kost = await this.kostRepository.findOne({ where: { id } });
+    if (!kost) {
+      throw new NotFoundException(`Properti ID ${id} tidak ditemukan.`);
+    }
+    const targetOwner = await this.userRepository.findOne({
+      where: { id: targetOwnerId },
+    });
+    if (!targetOwner) {
+      throw new NotFoundException(
+        `Pengguna ID ${targetOwnerId} tidak ditemukan.`,
+      );
+    }
+    kost.ownerId = targetOwner.id;
+    kost.ownerName = targetOwner.name.trim() || kost.ownerName;
+    if (targetOwner.phone && targetOwner.phone.trim()) {
+      kost.ownerPhone = targetOwner.phone.trim();
+    }
+    const saved = await this.kostRepository.save(kost);
+    await this.syncOwnerNames([saved]);
+    return saved;
   }
 
   async updateApproval(

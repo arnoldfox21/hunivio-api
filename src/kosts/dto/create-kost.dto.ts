@@ -118,6 +118,10 @@ export class CreateKostDto {
   isInstantBooking?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  allowDirectBooking?: boolean;
+
+  @IsOptional()
   @IsArray()
   roomFacilities?: string[];
 

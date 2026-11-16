@@ -3,13 +3,17 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  Index,
+  Unique,
 } from 'typeorm';
 
+@Unique(['kostId', 'userId'])
 @Entity('reviews')
 export class Review {
   @PrimaryGeneratedColumn()
   id: number;
 
+  @Index()
   @Column({ type: 'int' })
   kostId: number;
 

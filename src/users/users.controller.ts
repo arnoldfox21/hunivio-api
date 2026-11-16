@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  Query,
   UseGuards,
   Req,
   ForbiddenException,
@@ -70,8 +71,18 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('STAFF', 'ADMINISTRATOR')
   @Get('users')
-  async findAll() {
-    const users = await this.usersService.findAll();
+  async findAll(
+    @Query('search') search?: string,
+    @Query('role') role?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const users = await this.usersService.findAll({
+      search,
+      role,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
     return users.map((u) => this.usersService.sanitizeUser(u, true));
   }
 
@@ -98,12 +109,17 @@ export class UsersController {
         'Anda tidak memiliki izin mengubah profil pengguna lain.',
       );
     }
-    const updated = await this.usersService.updateProfile(id, dto);
+    const updated = await this.usersService.updateProfile(
+      id,
+      dto,
+      req.user.userId,
+      role,
+    );
     return this.usersService.sanitizeUser(updated, true);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('STAFF', 'ADMINISTRATOR')
+  @Roles('ADMINISTRATOR')
   @Patch('users/:id/role')
   async updateRole(
     @Param('id', ParseIntPipe) id: number,
@@ -144,6 +160,7 @@ export class UsersController {
       id,
       Boolean(isBanned),
       req.user.userId,
+      req.user.role,
     );
     return this.usersService.sanitizeUser(updated, true);
   }
@@ -155,9 +172,12 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('STAFF', 'ADMINISTRATOR')
+  @Roles('ADMINISTRATOR')
   @Delete('users/:id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.usersService.remove(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.usersService.remove(id, req.user.userId);
   }
 }
