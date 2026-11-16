@@ -13,11 +13,6 @@ import { UserFavorite } from './entities/user-favorite.entity';
 import { User } from '../users/entities/user.entity';
 import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
-import {
-  buildMalangDummyKosts,
-  buildMalangApartmentsAndKontrakans,
-  buildMalangDailyStays,
-} from './malang-kosts.seed';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
 import { toTitleCaseRegion } from '../common/region-format.util';
 import {
@@ -44,7 +39,6 @@ export class KostsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.cleanBrandNamesInDb();
-    await this.seedMalangDummyKostsIfNeeded();
     await this.seedFacilitiesIfNeeded();
   }
 
@@ -144,29 +138,6 @@ export class KostsService implements OnModuleInit {
         .filter((f) => f.category === 'PUBLIC')
         .map((f) => f.name),
     };
-  }
-
-  private async seedMalangDummyKostsIfNeeded() {
-    const candidates = [
-      ...buildMalangDummyKosts(100),
-      ...buildMalangApartmentsAndKontrakans(),
-      ...buildMalangDailyStays(50),
-    ];
-    const existingSlugs = new Set(
-      (
-        await this.kostRepository
-          .createQueryBuilder('kost')
-          .select('kost.slug', 'slug')
-          .getRawMany()
-      ).map((r) => r.slug),
-    );
-
-    const toInsert = candidates.filter((c) => c.slug && !existingSlugs.has(c.slug));
-    if (toInsert.length > 0) {
-      await this.kostRepository.save(
-        toInsert.map((item) => this.kostRepository.create(item)),
-      );
-    }
   }
 
   private async cleanBrandNamesInDb() {
