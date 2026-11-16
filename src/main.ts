@@ -68,7 +68,11 @@ async function bootstrap() {
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
-  app.useStaticAssets(uploadsDir, { prefix: '/uploads/' });
+  app.useStaticAssets(uploadsDir, {
+    prefix: '/uploads/',
+    maxAge: '365d',
+    immutable: true,
+  });
 
   const corsOrigin = process.env.CORS_ORIGIN?.trim();
   app.enableCors({

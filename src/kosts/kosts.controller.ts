@@ -11,18 +11,49 @@ import {
   Req,
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   NotFoundException,
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import sharp from 'sharp';
 import { KostsService } from './kosts.service';
 import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
 import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { verifyAuthToken } from '../auth/jwt.util';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+
+const UPLOAD_RATE_WINDOW_MS = 60_000;
+const UPLOAD_RATE_MAX_REQUESTS = 20;
+const uploadRateHits = new Map<number, { count: number; resetAt: number }>();
+
+function checkUploadRateLimit(userId: number): void {
+  const now = Date.now();
+  const entry = uploadRateHits.get(userId);
+  if (!entry || now > entry.resetAt) {
+    uploadRateHits.set(userId, {
+      count: 1,
+      resetAt: now + UPLOAD_RATE_WINDOW_MS,
+    });
+    if (uploadRateHits.size > 2000) {
+      for (const [k, v] of uploadRateHits) {
+        if (now > v.resetAt) uploadRateHits.delete(k);
+      }
+    }
+    return;
+  }
+  entry.count += 1;
+  if (entry.count > UPLOAD_RATE_MAX_REQUESTS) {
+    throw new HttpException(
+      'Terlalu banyak upload gambar. Tunggu 1 menit sebelum mencoba lagi.',
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+}
 
 function extractOptionalViewerId(req: Request): number | undefined {
   const auth = req.headers.authorization || '';
@@ -154,11 +185,13 @@ export class KostsController {
 
   @UseGuards(JwtAuthGuard)
   @Post('upload-image')
-  uploadImage(
+  async uploadImage(
     @Body()
     body: { base64?: string; filename?: string; mimeType?: string },
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ) {
+    checkUploadRateLimit(req.user.userId);
+
     const rawBase64 = body?.base64?.trim();
     if (!rawBase64) {
       throw new BadRequestException('Data gambar base64 wajib diisi');
@@ -171,8 +204,8 @@ export class KostsController {
     if (buffer.length === 0) {
       throw new BadRequestException('Format gambar tidak valid');
     }
-    if (buffer.length > 5 * 1024 * 1024) {
-      throw new BadRequestException('Ukuran gambar maksimal 5 MB');
+    if (buffer.length > 8 * 1024 * 1024) {
+      throw new BadRequestException('Ukuran gambar mentah maksimal 8 MB');
     }
 
     const isJpeg =
@@ -197,21 +230,38 @@ export class KostsController {
       );
     }
 
-    const ext = isPng ? '.png' : isWebp ? '.webp' : '.jpg';
+    let compressedBuffer: Buffer;
+    try {
+      compressedBuffer = await sharp(buffer, { limitInputPixels: 25_000_000 })
+        .rotate()
+        .resize({
+          width: 1600,
+          height: 1600,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .webp({ quality: 80, effort: 4 })
+        .toBuffer();
+    } catch {
+      throw new BadRequestException(
+        'Gambar rusak, dimensi terlalu besar, atau tidak dapat diproses.',
+      );
+    }
 
     const uploadsDir = path.join(process.cwd(), 'uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
-    const safeFileName = `kost_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
-    fs.writeFileSync(path.join(uploadsDir, safeFileName), buffer);
+    const safeFileName = `kost_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.webp`;
+    fs.writeFileSync(path.join(uploadsDir, safeFileName), compressedBuffer);
 
     const host = req.get('host');
     const url = `${req.protocol}://${host}/uploads/${safeFileName}`;
     return {
       url,
       path: `/uploads/${safeFileName}`,
+      sizeBytes: compressedBuffer.length,
     };
   }
 
