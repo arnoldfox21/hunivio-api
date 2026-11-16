@@ -50,8 +50,6 @@ export class WalletService {
     private readonly payoutRepo: Repository<PayoutRequest>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
-    @InjectRepository(Kost)
-    private readonly kostRepo: Repository<Kost>,
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => BookingsService))
     private readonly bookingsService: BookingsService,

@@ -55,13 +55,6 @@ function checkUploadRateLimit(userId: number): void {
   }
 }
 
-function extractOptionalViewerId(req: Request): number | undefined {
-  const auth = req.headers.authorization || '';
-  if (!auth.startsWith('Bearer ')) return undefined;
-  const payload = verifyAuthToken(auth.slice(7).trim());
-  return payload?.userId;
-}
-
 @Controller('kosts')
 export class KostsController {
   constructor(private readonly kostsService: KostsService) {}

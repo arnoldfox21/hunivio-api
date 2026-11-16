@@ -34,8 +34,6 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     private readonly bookingRepository: Repository<Booking>,
     @InjectRepository(PointTransaction)
     private readonly pointTxRepository: Repository<PointTransaction>,
-    @InjectRepository(Kost)
-    private readonly kostRepository: Repository<Kost>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     @Inject(forwardRef(() => KostsService))
