@@ -39,7 +39,9 @@ export class KostsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.cleanBrandNamesInDb();
-    await this.seedFacilitiesIfNeeded();
+    if (process.env.ENABLE_AUTO_SEED === 'true') {
+      await this.seedFacilitiesIfNeeded();
+    }
   }
 
   private async seedFacilitiesIfNeeded() {

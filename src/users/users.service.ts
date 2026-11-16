@@ -37,7 +37,9 @@ export class UsersService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await this._ensureDefaultStaffPartner();
+    if (process.env.ENABLE_AUTO_SEED === 'true') {
+      await this._ensureDefaultStaffPartner();
+    }
   }
 
   private async _ensureDefaultStaffPartner() {

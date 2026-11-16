@@ -16,7 +16,9 @@ export class LocationsService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await this.seedRegionsIfNeeded();
+    if (process.env.ENABLE_AUTO_SEED === 'true') {
+      await this.seedRegionsIfNeeded();
+    }
   }
 
   async seedRegionsIfNeeded() {
