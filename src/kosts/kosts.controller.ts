@@ -230,9 +230,11 @@ export class KostsController {
       );
     }
 
-    let compressedBuffer: Buffer;
+    const fallbackExt = isPng ? 'png' : isWebp ? 'webp' : 'jpg';
+    let outputBuffer: Buffer = buffer;
+    let outputExt = fallbackExt;
     try {
-      compressedBuffer = await sharp(buffer, { limitInputPixels: 25_000_000 })
+      outputBuffer = await sharp(buffer, { limitInputPixels: 100_000_000 })
         .rotate()
         .resize({
           width: 1600,
@@ -242,10 +244,14 @@ export class KostsController {
         })
         .webp({ quality: 80, effort: 4 })
         .toBuffer();
-    } catch {
-      throw new BadRequestException(
-        'Gambar rusak, dimensi terlalu besar, atau tidak dapat diproses.',
+      outputExt = 'webp';
+    } catch (err) {
+      console.warn(
+        `[upload-image] sharp gagal memproses gambar, fallback ke file asli (${fallbackExt}):`,
+        err instanceof Error ? err.message : err,
       );
+      outputBuffer = buffer;
+      outputExt = fallbackExt;
     }
 
     const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -253,15 +259,15 @@ export class KostsController {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
-    const safeFileName = `kost_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.webp`;
-    fs.writeFileSync(path.join(uploadsDir, safeFileName), compressedBuffer);
+    const safeFileName = `kost_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${outputExt}`;
+    fs.writeFileSync(path.join(uploadsDir, safeFileName), outputBuffer);
 
     const host = req.get('host');
     const url = `${req.protocol}://${host}/uploads/${safeFileName}`;
     return {
       url,
       path: `/uploads/${safeFileName}`,
-      sizeBytes: compressedBuffer.length,
+      sizeBytes: outputBuffer.length,
     };
   }
 
