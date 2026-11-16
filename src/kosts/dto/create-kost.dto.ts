@@ -5,7 +5,14 @@ import {
   IsBoolean,
   IsArray,
   IsNumber,
+  Matches,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  INDONESIAN_WA_MESSAGE,
+  INDONESIAN_WA_REGEX,
+  normalizeIndonesianPhoneInput,
+} from '../../common/phone.util';
 
 export class CreateKostDto {
   @IsString()
@@ -142,7 +149,9 @@ export class CreateKostDto {
   ownerName?: string;
 
   @IsOptional()
+  @Transform(({ value }) => normalizeIndonesianPhoneInput(value))
   @IsString()
+  @Matches(INDONESIAN_WA_REGEX, { message: INDONESIAN_WA_MESSAGE })
   ownerPhone?: string;
 
   @IsOptional()

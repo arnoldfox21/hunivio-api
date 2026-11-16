@@ -413,7 +413,7 @@ export class KostsService implements OnModuleInit {
       const owner = ownerMap.get(k.ownerId);
       if (owner && owner.name && owner.name.trim().length > 0) {
         k.ownerName = owner.name.trim();
-        if (owner.phone && owner.phone.trim()) {
+        if ((!k.ownerPhone || !k.ownerPhone.trim()) && owner.phone && owner.phone.trim()) {
           k.ownerPhone = owner.phone.trim();
         }
       }
@@ -695,7 +695,7 @@ export class KostsService implements OnModuleInit {
         ownerId,
         ownerName: creator?.name?.trim() || dto.ownerName || 'Pengelola Kost',
         ownerPhone:
-          creator?.phone?.trim() || dto.ownerPhone || '6281234567890',
+          dto.ownerPhone?.trim() || creator?.phone?.trim() || '6281234567890',
         slug,
         approvalStatus: isAutoApproved ? 'APPROVED' : 'PENDING',
         allowDirectBooking: isAutoApproved
