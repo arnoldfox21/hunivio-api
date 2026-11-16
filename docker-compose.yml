@@ -35,7 +35,7 @@ services:
     volumes:
       - uploads_data:/app/uploads
       # Uncomment jika file firebase-service-account.json sudah ada di VPS:
-      # - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
 
 volumes:
   pgdata:
