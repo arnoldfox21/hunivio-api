@@ -19,6 +19,7 @@ import {
   buildMalangDailyStays,
 } from './malang-kosts.seed';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
+import { toTitleCaseRegion } from '../common/region-format.util';
 import {
   EXTRA_PROPERTY_SLOT_FEE,
   FREE_PROPERTY_QUOTA,
@@ -189,6 +190,16 @@ export class KostsService implements OnModuleInit {
       }
       if (cleanedOwner !== k.ownerName) {
         k.ownerName = cleanedOwner;
+        updated = true;
+      }
+      const formattedCity = toTitleCaseRegion(k.city);
+      if (formattedCity && formattedCity !== k.city) {
+        k.city = formattedCity;
+        updated = true;
+      }
+      const formattedDistrict = toTitleCaseRegion(k.district);
+      if (formattedDistrict && formattedDistrict !== k.district) {
+        k.district = formattedDistrict;
         updated = true;
       }
       if (updated) {
@@ -522,7 +533,19 @@ export class KostsService implements OnModuleInit {
       .groupBy('kost.city')
       .orderBy('COUNT(kost.id)', 'DESC')
       .getRawMany();
-    return raw.map((r) => ({ city: r.city, count: Number(r.count) }));
+    const map = new Map<string, { city: string; count: number }>();
+    for (const r of raw) {
+      const formatted = toTitleCaseRegion(r.city);
+      if (!formatted) continue;
+      const key = formatted.toLowerCase();
+      const prev = map.get(key);
+      if (prev) {
+        prev.count += Number(r.count);
+      } else {
+        map.set(key, { city: formatted, count: Number(r.count) });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }
 
   private _filtersCache: {
@@ -555,21 +578,39 @@ export class KostsService implements OnModuleInit {
       ])
       .where('kost.approvalStatus = :status', { status: 'APPROVED' })
       .getMany();
-    const cityCounts = new Map<string, number>();
-    const cityDistrictCounts = new Map<string, Map<string, number>>();
+    const cityCounts = new Map<string, { label: string; count: number }>();
+    const cityDistrictCounts = new Map<
+      string,
+      Map<string, { label: string; count: number }>
+    >();
     const typesSet = new Set<string>();
     const facilitiesCount = new Map<string, number>();
 
     for (const k of allKosts) {
-      if (k.city) {
-        cityCounts.set(k.city, (cityCounts.get(k.city) || 0) + 1);
-        if (k.district) {
-          let distMap = cityDistrictCounts.get(k.city);
+      const formattedCity = toTitleCaseRegion(k.city);
+      if (formattedCity) {
+        const cityKey = formattedCity.toLowerCase();
+        const existingCity = cityCounts.get(cityKey);
+        if (existingCity) {
+          existingCity.count += 1;
+        } else {
+          cityCounts.set(cityKey, { label: formattedCity, count: 1 });
+        }
+
+        const formattedDistrict = toTitleCaseRegion(k.district);
+        if (formattedDistrict) {
+          let distMap = cityDistrictCounts.get(cityKey);
           if (!distMap) {
-            distMap = new Map<string, number>();
-            cityDistrictCounts.set(k.city, distMap);
+            distMap = new Map<string, { label: string; count: number }>();
+            cityDistrictCounts.set(cityKey, distMap);
           }
-          distMap.set(k.district, (distMap.get(k.district) || 0) + 1);
+          const distKey = formattedDistrict.toLowerCase();
+          const existingDist = distMap.get(distKey);
+          if (existingDist) {
+            existingDist.count += 1;
+          } else {
+            distMap.set(distKey, { label: formattedDistrict, count: 1 });
+          }
         }
       }
       if (k.type) {
@@ -585,19 +626,20 @@ export class KostsService implements OnModuleInit {
       }
     }
 
-    const cities = Array.from(cityCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([city]) => city);
+    const sortedCities = Array.from(cityCounts.entries()).sort(
+      (a, b) => b[1].count - a[1].count,
+    );
+    const cities = sortedCities.map(([, val]) => val.label);
 
-    const cityStats = Array.from(cityCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([city, count]) => {
-        const distMap = cityDistrictCounts.get(city) || new Map<string, number>();
-        const districts = Array.from(distMap.entries())
-          .sort((a, b) => b[1] - a[1])
-          .map(([district, distCount]) => ({ district, count: distCount }));
-        return { city, count, districts };
-      });
+    const cityStats = sortedCities.map(([cityKey, val]) => {
+      const distMap =
+        cityDistrictCounts.get(cityKey) ||
+        new Map<string, { label: string; count: number }>();
+      const districts = Array.from(distMap.values())
+        .sort((a, b) => b.count - a.count)
+        .map((d) => ({ district: d.label, count: d.count }));
+      return { city: val.label, count: val.count, districts };
+    });
 
     const types = Array.from(typesSet);
 
@@ -675,6 +717,8 @@ export class KostsService implements OnModuleInit {
 
       const kost = kostRepo.create({
         ...dto,
+        city: toTitleCaseRegion(dto.city),
+        district: toTitleCaseRegion(dto.district),
         ownerId,
         ownerName: creator?.name?.trim() || dto.ownerName || 'Pengelola Kost',
         ownerPhone:
@@ -686,7 +730,9 @@ export class KostsService implements OnModuleInit {
           : false,
         rejectionReason: '',
       });
-      return kostRepo.save(kost);
+      const saved = await kostRepo.save(kost);
+      this._filtersCache = null;
+      return saved;
     });
   }
 
@@ -712,6 +758,7 @@ export class KostsService implements OnModuleInit {
       kost.ownerPhone = targetOwner.phone.trim();
     }
     const saved = await this.kostRepository.save(kost);
+    this._filtersCache = null;
     await this.syncOwnerNames([saved]);
     return saved;
   }
@@ -779,13 +826,20 @@ export class KostsService implements OnModuleInit {
       }
     }
 
+    this._filtersCache = null;
     return saved;
   }
 
   async update(id: number, dto: UpdateKostDto): Promise<Kost> {
     const kost = await this.findOne(id);
     const wasRejected = (kost.approvalStatus || '').toUpperCase() === 'REJECTED';
-    Object.assign(kost, dto);
+    Object.assign(kost, {
+      ...dto,
+      ...(dto.city !== undefined ? { city: toTitleCaseRegion(dto.city) } : {}),
+      ...(dto.district !== undefined
+        ? { district: toTitleCaseRegion(dto.district) }
+        : {}),
+    });
     if (wasRejected) {
       const owner = await this.userRepository.findOne({
         where: { id: kost.ownerId },
@@ -796,12 +850,15 @@ export class KostsService implements OnModuleInit {
         kost.rejectionReason = '';
       }
     }
-    return this.kostRepository.save(kost);
+    const saved = await this.kostRepository.save(kost);
+    this._filtersCache = null;
+    return saved;
   }
 
   async remove(id: number): Promise<{ deleted: boolean; id: number }> {
     const kost = await this.findOne(id);
     await this.kostRepository.remove(kost);
+    this._filtersCache = null;
     return { deleted: true, id };
   }
 

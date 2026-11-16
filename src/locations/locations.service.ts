@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Region } from './entities/region.entity';
 import { Kost } from '../kosts/entities/kost.entity';
 import { INDONESIA_REGIONS_SEED } from './regions.seed';
+import { toTitleCaseRegion } from '../common/region-format.util';
 
 @Injectable()
 export class LocationsService implements OnModuleInit {
@@ -56,13 +57,14 @@ export class LocationsService implements OnModuleInit {
 
     const seen = new Map<string, string>();
     for (const r of regions) {
-      const key = r.name.trim().toLowerCase();
-      if (key && !seen.has(key)) seen.set(key, r.name.trim());
+      const formatted = toTitleCaseRegion(r.name);
+      const key = formatted.toLowerCase();
+      if (key && !seen.has(key)) seen.set(key, formatted);
     }
     for (const row of kostCitiesRaw) {
-      const val = (row.city || '').trim();
-      const key = val.toLowerCase();
-      if (key && !seen.has(key)) seen.set(key, val);
+      const formatted = toTitleCaseRegion(row.city);
+      const key = formatted.toLowerCase();
+      if (key && !seen.has(key)) seen.set(key, formatted);
     }
 
     const all = Array.from(seen.values());
@@ -108,9 +110,9 @@ export class LocationsService implements OnModuleInit {
     const seen = new Map<string, string>();
     for (const r of matchedRegions) {
       for (const d of r.districts || []) {
-        const clean = d.trim();
-        const key = clean.toLowerCase();
-        if (key && !seen.has(key)) seen.set(key, clean);
+        const formatted = toTitleCaseRegion(d);
+        const key = formatted.toLowerCase();
+        if (key && !seen.has(key)) seen.set(key, formatted);
       }
     }
 
@@ -125,9 +127,9 @@ export class LocationsService implements OnModuleInit {
     }
     const kostDistrictsRaw = await qb.getRawMany<{ district: string }>();
     for (const row of kostDistrictsRaw) {
-      const val = (row.district || '').trim();
-      const key = val.toLowerCase();
-      if (key && !seen.has(key)) seen.set(key, val);
+      const formatted = toTitleCaseRegion(row.district);
+      const key = formatted.toLowerCase();
+      if (key && !seen.has(key)) seen.set(key, formatted);
     }
 
     const all = Array.from(seen.values());
