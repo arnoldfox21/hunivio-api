@@ -38,11 +38,13 @@ import { WalletModule } from './wallet/wallet.module';
             type: 'postgres',
             url: process.env.DATABASE_URL,
             ssl:
-              (process.env.DATABASE_URL.includes('127.0.0.1') ||
-                process.env.DATABASE_URL.includes('localhost')) &&
-              !process.env.DATABASE_URL.includes('sslmode=require')
-                ? false
-                : { rejectUnauthorized: false },
+              process.env.DB_SSL === 'true' ||
+              (process.env.DB_SSL !== 'false' &&
+                (process.env.DATABASE_URL.includes('sslmode=require') ||
+                  process.env.DATABASE_URL.includes('sslmode=verify-full') ||
+                  process.env.DATABASE_URL.includes('ssl=true')))
+                ? { rejectUnauthorized: false }
+                : false,
             entities: [
               Kost,
               Facility,
