@@ -37,7 +37,12 @@ import { WalletModule } from './wallet/wallet.module';
         ? {
             type: 'postgres',
             url: process.env.DATABASE_URL,
-            ssl: { rejectUnauthorized: false },
+            ssl:
+              (process.env.DATABASE_URL.includes('127.0.0.1') ||
+                process.env.DATABASE_URL.includes('localhost')) &&
+              !process.env.DATABASE_URL.includes('sslmode=require')
+                ? false
+                : { rejectUnauthorized: false },
             entities: [
               Kost,
               Facility,

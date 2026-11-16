@@ -2,7 +2,7 @@
 set -e
 
 PG_BIN="/Applications/Postgres.app/Contents/Versions/16/bin"
-PG_DATA="/Users/kurniawank/Documents/Projects/kost2u-api/.pgdata"
+PG_DATA="/Users/kurniawank/Documents/Projects/hunivio-api/.pgdata"
 
 if [ ! -d "$PG_DATA" ]; then
   echo "📦 Menginisialisasi cluster database PostgreSQL lokal di $PG_DATA..."
@@ -14,9 +14,9 @@ if ! "$PG_BIN/pg_isready" -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then
   "$PG_BIN/pg_ctl" -D "$PG_DATA" -l "$PG_DATA/postgres.log" start
 fi
 
-if ! "$PG_BIN/psql" -h 127.0.0.1 -U postgres -lqt | cut -d \| -f 1 | grep -qw kost2u_db; then
-  echo "🛠️ Membuat database kost2u_db..."
-  "$PG_BIN/createdb" -h 127.0.0.1 -U postgres kost2u_db
+if ! "$PG_BIN/psql" -h 127.0.0.1 -U postgres -lqt | cut -d \| -f 1 | grep -qw hunivio_db; then
+  echo "🛠️ Membuat database hunivio_db..."
+  "$PG_BIN/createdb" -h 127.0.0.1 -U postgres hunivio_db
 fi
 
-echo "✅ PostgreSQL siap di 127.0.0.1:5432 (database: kost2u_db)"
+echo "✅ PostgreSQL siap di 127.0.0.1:5432 (database: hunivio_db)"

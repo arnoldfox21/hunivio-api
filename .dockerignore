@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.github
+.pgdata
+uploads
+.env
+.env.*
+!.env.example
+firebase-service-account.json
+*.log
+*.tsbuildinfo
+.DS_Store
+ensure-postgres.sh
+README.md
