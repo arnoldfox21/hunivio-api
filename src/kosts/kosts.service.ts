@@ -15,6 +15,7 @@ import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
 import { toTitleCaseRegion } from '../common/region-format.util';
+import { StorageService } from '../storage/storage.service';
 import {
   EXTRA_PROPERTY_SLOT_FEE,
   FREE_PROPERTY_QUOTA,
@@ -35,6 +36,7 @@ export class KostsService implements OnModuleInit {
     private readonly firebaseNotificationService: FirebaseNotificationService,
     private readonly walletService: WalletService,
     private readonly dataSource: DataSource,
+    private readonly storageService: StorageService,
   ) {}
 
   async onModuleInit() {
@@ -976,6 +978,7 @@ export class KostsService implements OnModuleInit {
 
   async update(id: number, dto: UpdateKostDto): Promise<Kost> {
     const kost = await this.findOne(id);
+    const previousImages = Array.isArray(kost.images) ? [...kost.images] : [];
     const wasRejected = (kost.approvalStatus || '').toUpperCase() === 'REJECTED';
     Object.assign(kost, {
       ...dto,
@@ -1015,13 +1018,28 @@ export class KostsService implements OnModuleInit {
     }
     const saved = await this.kostRepository.save(kost);
     this._filtersCache.clear();
+    if (dto.images !== undefined) {
+      const nextSet = new Set(Array.isArray(saved.images) ? saved.images : []);
+      const removed = previousImages.filter((url) => !nextSet.has(url));
+      if (removed.length > 0) {
+        void Promise.allSettled(
+          removed.map((url) => this.storageService.deleteByUrl(url)),
+        );
+      }
+    }
     return saved;
   }
 
   async remove(id: number): Promise<{ deleted: boolean; id: number }> {
     const kost = await this.findOne(id);
+    const imagesToDelete = Array.isArray(kost.images) ? [...kost.images] : [];
     await this.kostRepository.remove(kost);
     this._filtersCache.clear();
+    if (imagesToDelete.length > 0) {
+      void Promise.allSettled(
+        imagesToDelete.map((url) => this.storageService.deleteByUrl(url)),
+      );
+    }
     return { deleted: true, id };
   }
 

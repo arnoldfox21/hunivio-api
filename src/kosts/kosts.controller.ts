@@ -17,15 +17,15 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
-import * as fs from 'fs';
-import * as path from 'path';
-import sharp from 'sharp';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const sharp = require('sharp') as typeof import('sharp').default;
 import { KostsService } from './kosts.service';
 import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
 import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { verifyAuthToken } from '../auth/jwt.util';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { StorageService } from '../storage/storage.service';
 
 const UPLOAD_RATE_WINDOW_MS = 60_000;
 const UPLOAD_RATE_MAX_REQUESTS = 20;
@@ -57,7 +57,10 @@ function checkUploadRateLimit(userId: number): void {
 
 @Controller('kosts')
 export class KostsController {
-  constructor(private readonly kostsService: KostsService) {}
+  constructor(
+    private readonly kostsService: KostsService,
+    private readonly storageService: StorageService,
+  ) {}
 
   @Get()
   findAll(
@@ -233,8 +236,8 @@ export class KostsController {
       outputBuffer = await sharp(buffer, { limitInputPixels: 100_000_000 })
         .rotate()
         .resize({
-          width: 1600,
-          height: 1600,
+          width: 1440,
+          height: 1440,
           fit: 'inside',
           withoutEnlargement: true,
         })
@@ -250,20 +253,23 @@ export class KostsController {
       outputExt = fallbackExt;
     }
 
-    const uploadsDir = path.join(process.cwd(), 'uploads');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
+    const contentType =
+      outputExt === 'webp'
+        ? 'image/webp'
+        : outputExt === 'png'
+          ? 'image/png'
+          : 'image/jpeg';
+    const key = this.storageService.buildKostImageKey(outputExt);
+    const uploaded = await this.storageService.uploadBuffer(
+      outputBuffer,
+      key,
+      contentType,
+    );
 
-    const safeFileName = `kost_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${outputExt}`;
-    fs.writeFileSync(path.join(uploadsDir, safeFileName), outputBuffer);
-
-    const host = req.get('host');
-    const url = `${req.protocol}://${host}/uploads/${safeFileName}`;
     return {
-      url,
-      path: `/uploads/${safeFileName}`,
-      sizeBytes: outputBuffer.length,
+      url: uploaded.url,
+      path: `/${uploaded.key}`,
+      sizeBytes: uploaded.sizeBytes,
     };
   }
 

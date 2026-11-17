@@ -8,9 +8,11 @@
     "build": "tsc",
     "prestart": "tsc",
     "start": "node dist/main.js",
-    "start:dev": "bash ./ensure-postgres.sh && tsc && node dist/main.js"
+    "start:dev": "bash ./ensure-postgres.sh && tsc && node dist/main.js",
+    "migrate:r2": "node dist/scripts/migrate-uploads-to-r2.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1170.0",
     "@nestjs/common": "^10.3.0",
     "@nestjs/config": "^3.2.0",
     "@nestjs/core": "^10.3.0",

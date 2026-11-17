@@ -26,6 +26,7 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { PostsModule } from './posts/posts.module';
 import { LocationsModule } from './locations/locations.module';
 import { WalletModule } from './wallet/wallet.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -107,6 +108,7 @@ import { WalletModule } from './wallet/wallet.module';
     PostsModule,
     LocationsModule,
     WalletModule,
+    StorageModule,
   ],
 })
 export class AppModule {}

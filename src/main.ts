@@ -10,7 +10,6 @@ types.setTypeParser(1114, (str: string) =>
 );
 
 import { execSync } from 'child_process';
-import * as fs from 'fs';
 import * as path from 'path';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -63,16 +62,6 @@ async function bootstrap() {
   });
   app.use(express.json({ limit: '15mb' }));
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
-
-  const uploadsDir = path.join(process.cwd(), 'uploads');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  }
-  app.useStaticAssets(uploadsDir, {
-    prefix: '/uploads/',
-    maxAge: '365d',
-    immutable: true,
-  });
 
   const corsOrigin = process.env.CORS_ORIGIN?.trim();
   app.enableCors({
