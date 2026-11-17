@@ -48,6 +48,24 @@ export class User {
   role: string;
 
   @Column({ default: false })
+  isVerified: boolean;
+
+  @Column({ type: 'varchar', length: 24, default: 'NONE' })
+  verificationStatus: string; // 'NONE' | 'PENDING' | 'VERIFIED' | 'REJECTED'
+
+  @Column({ type: 'varchar', length: 64, default: '' })
+  verificationSurveyDate: string;
+
+  @Column({ type: 'int', nullable: true })
+  verificationKostId: number | null;
+
+  @Column({ type: 'text', default: '' })
+  verificationNotes: string;
+
+  @Column({ type: 'text', default: '' })
+  verificationRejectionReason: string;
+
+  @Column({ default: false })
   isBanned: boolean;
 
   @Column({ type: 'timestamp', nullable: true })

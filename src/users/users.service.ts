@@ -65,6 +65,8 @@ export class UsersService implements OnModuleInit {
   }
 
   sanitizeUser(user: User, includePrivate = false) {
+    const upperRole = (user.role || '').toUpperCase();
+    const isStaffOrAdmin = upperRole === 'STAFF' || upperRole === 'ADMINISTRATOR';
     const base = {
       id: user.id,
       name: user.name,
@@ -74,6 +76,10 @@ export class UsersService implements OnModuleInit {
       city: user.city,
       coverUrl: user.coverUrl,
       role: user.role,
+      isVerified: Boolean(user.isVerified) || isStaffOrAdmin,
+      verificationStatus: isStaffOrAdmin
+        ? 'VERIFIED'
+        : user.verificationStatus || (user.isVerified ? 'VERIFIED' : 'NONE'),
       showWhatsapp: Boolean(user.showWhatsapp),
       isBanned: Boolean(user.isBanned),
       bannedAt: user.bannedAt ?? null,
@@ -96,6 +102,10 @@ export class UsersService implements OnModuleInit {
       ...base,
       email: user.email,
       phone: user.phone,
+      verificationSurveyDate: user.verificationSurveyDate || '',
+      verificationKostId: user.verificationKostId ?? null,
+      verificationNotes: user.verificationNotes || '',
+      verificationRejectionReason: user.verificationRejectionReason || '',
       hasPassword: Boolean(user.passwordHash),
       creditBalance: Number(user.creditBalance ?? 0),
       payoutBalance: Number(user.payoutBalance ?? 0),
@@ -548,6 +558,68 @@ export class UsersService implements OnModuleInit {
     if (isBanned) {
       user.fcmToken = '';
     }
+    return this.userRepository.save(user);
+  }
+
+  async requestOwnerVerification(
+    userId: number,
+    body: {
+      kostId?: number | null;
+      preferredDate?: string;
+      phone?: string;
+      notes?: string;
+    },
+  ): Promise<User> {
+    const user = await this.findOne(userId);
+    const role = (user.role || '').toUpperCase();
+    if (role === 'STAFF' || role === 'ADMINISTRATOR' || user.isVerified) {
+      throw new BadRequestException('Akun Anda sudah terverifikasi.');
+    }
+    const preferredDate = (body.preferredDate || '').trim();
+    if (!preferredDate) {
+      throw new BadRequestException('Tanggal rencana survei wajib diisi.');
+    }
+    const nextPhone = (body.phone || user.phone || '').trim();
+    if (!nextPhone || nextPhone.length < 8) {
+      throw new BadRequestException(
+        'Nomor WhatsApp aktif wajib diisi agar Staff dapat berkoordinasi.',
+      );
+    }
+    user.phone = nextPhone;
+    user.verificationStatus = 'PENDING';
+    user.verificationSurveyDate = preferredDate;
+    user.verificationKostId =
+      body.kostId !== undefined && body.kostId !== null && Number(body.kostId) > 0
+        ? Number(body.kostId)
+        : null;
+    user.verificationNotes = (body.notes || '').trim();
+    user.verificationRejectionReason = '';
+    return this.userRepository.save(user);
+  }
+
+  async setVerificationStatus(
+    id: number,
+    params: {
+      isVerified?: boolean;
+      status?: string;
+      rejectionReason?: string;
+    },
+  ): Promise<User> {
+    const user = await this.findOne(id);
+    const normalizedStatus = (params.status || '').trim().toUpperCase();
+    if (normalizedStatus === 'REJECTED') {
+      user.isVerified = false;
+      user.verificationStatus = 'REJECTED';
+      user.verificationRejectionReason = (params.rejectionReason || '').trim();
+      return this.userRepository.save(user);
+    }
+    const verified =
+      params.isVerified !== undefined
+        ? Boolean(params.isVerified)
+        : normalizedStatus === 'VERIFIED';
+    user.isVerified = verified;
+    user.verificationStatus = verified ? 'VERIFIED' : 'NONE';
+    user.verificationRejectionReason = '';
     return this.userRepository.save(user);
   }
 

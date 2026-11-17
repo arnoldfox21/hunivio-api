@@ -978,6 +978,21 @@ export class KostsService implements OnModuleInit {
 
   async update(id: number, dto: UpdateKostDto): Promise<Kost> {
     const kost = await this.findOne(id);
+    if (dto.allowDirectBooking === true && kost.ownerId) {
+      const owner = await this.userRepository.findOne({
+        where: { id: kost.ownerId },
+      });
+      const ownerRole = (owner?.role || '').toUpperCase();
+      const isOwnerVerified =
+        Boolean(owner?.isVerified) ||
+        ownerRole === 'STAFF' ||
+        ownerRole === 'ADMINISTRATOR';
+      if (!isOwnerVerified) {
+        throw new BadRequestException(
+          'Pemilik properti harus terverifikasi terlebih dahulu sebelum mengaktifkan Booking Langsung (Escrow).',
+        );
+      }
+    }
     const previousImages = Array.isArray(kost.images) ? [...kost.images] : [];
     const wasRejected = (kost.approvalStatus || '').toUpperCase() === 'REJECTED';
     Object.assign(kost, {

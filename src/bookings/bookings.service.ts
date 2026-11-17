@@ -443,6 +443,21 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         'Properti ini belum mengaktifkan fitur booking langsung via aplikasi. Silakan ajukan survei lokasi.',
       );
     }
+    if (kost.ownerId) {
+      const owner = await this.userRepository.findOne({
+        where: { id: kost.ownerId },
+      });
+      const ownerRole = (owner?.role || '').toUpperCase();
+      const isOwnerVerified =
+        Boolean(owner?.isVerified) ||
+        ownerRole === 'STAFF' ||
+        ownerRole === 'ADMINISTRATOR';
+      if (!isOwnerVerified) {
+        throw new BadRequestException(
+          'Pemilik properti belum terverifikasi untuk Booking Langsung. Silakan ajukan survei lokasi.',
+        );
+      }
+    }
     if (kost.availableRooms <= 0) {
       throw new BadRequestException(
         'Maaf, saat ini tidak ada kamar/unit yang tersedia.',

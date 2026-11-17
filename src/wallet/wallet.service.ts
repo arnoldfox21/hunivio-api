@@ -569,6 +569,16 @@ export class WalletService {
         throw new NotFoundException('Pengguna tidak ditemukan.');
       }
       this._assertEligibleUser(user);
+      const userRole = (user.role || '').toUpperCase();
+      const isUserVerified =
+        Boolean(user.isVerified) ||
+        userRole === 'STAFF' ||
+        userRole === 'ADMINISTRATOR';
+      if (!isUserVerified) {
+        throw new ForbiddenException(
+          'Akun Anda belum terverifikasi. Ajukan survei verifikasi di profil untuk membuka fitur Tarik Dana.',
+        );
+      }
 
       const currentPayout = Number(user.payoutBalance ?? 0);
       if (currentPayout < amount) {

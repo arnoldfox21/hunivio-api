@@ -148,6 +148,41 @@ export class UsersController {
     return this.usersService.updateFcmToken(id, fcmToken);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post('users/verification-request')
+  async requestVerification(
+    @Body()
+    body: {
+      kostId?: number | null;
+      preferredDate?: string;
+      phone?: string;
+      notes?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const updated = await this.usersService.requestOwnerVerification(
+      req.user.userId,
+      body,
+    );
+    return this.usersService.sanitizeUser(updated, true);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Patch('users/:id/verify')
+  async verifyUser(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      isVerified?: boolean;
+      status?: string;
+      rejectionReason?: string;
+    },
+  ) {
+    const updated = await this.usersService.setVerificationStatus(id, body);
+    return this.usersService.sanitizeUser(updated, true);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('STAFF', 'ADMINISTRATOR')
   @Patch('users/:id/ban')
