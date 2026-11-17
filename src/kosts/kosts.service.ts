@@ -542,6 +542,13 @@ export class KostsService implements OnModuleInit {
         owner?.showWhatsapp,
       );
       const ownerRole = (owner?.role || '').toUpperCase();
+      const isStaffPosted =
+        ownerRole === 'STAFF' || ownerRole === 'ADMINISTRATOR';
+      (k as Kost & { isStaffPosted?: boolean; staffWhatsapp?: string }).isStaffPosted =
+        isStaffPosted;
+      if (isStaffPosted && owner?.phone && owner.phone.trim()) {
+        (k as Kost & { staffWhatsapp?: string }).staffWhatsapp = owner.phone.trim();
+      }
       k.isVerified =
         Boolean(owner?.isVerified) ||
         ownerRole === 'STAFF' ||

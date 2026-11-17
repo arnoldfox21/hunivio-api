@@ -10,6 +10,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
+import { Kost } from '../kosts/entities/kost.entity';
 import {
   GoogleAuthDto,
   UpdateUserDto,
@@ -35,6 +36,8 @@ export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Kost)
+    private readonly kostRepository: Repository<Kost>,
     private readonly storageService: StorageService,
   ) {}
 
@@ -583,13 +586,35 @@ export class UsersService implements OnModuleInit {
   ): Promise<User> {
     const user = await this.findOne(userId);
     const role = (user.role || '').toUpperCase();
-    if (role === 'STAFF' || role === 'ADMINISTRATOR' || user.isVerified) {
+    const requestedKostId =
+      body.kostId !== undefined && body.kostId !== null && Number(body.kostId) > 0
+        ? Number(body.kostId)
+        : null;
+    if (role === 'STAFF' || role === 'ADMINISTRATOR') {
       throw new BadRequestException('Akun Anda sudah terverifikasi.');
     }
-    const preferredDate = (body.preferredDate || '').trim();
-    if (!preferredDate) {
-      throw new BadRequestException('Tanggal rencana survei wajib diisi.');
+    if (!requestedKostId && user.isVerified) {
+      throw new BadRequestException('Akun Anda sudah terverifikasi.');
     }
+    if (requestedKostId) {
+      const targetKost = await this.kostRepository.findOne({
+        where: { id: requestedKostId },
+      });
+      if (!targetKost) {
+        throw new NotFoundException('Properti tidak ditemukan.');
+      }
+      if (targetKost.ownerId === user.id) {
+        throw new BadRequestException('Properti ini sudah menjadi milik Anda.');
+      }
+      const currentOwner = targetKost.ownerId
+        ? await this.userRepository.findOne({ where: { id: targetKost.ownerId } })
+        : null;
+      const currentOwnerRole = (currentOwner?.role || '').toUpperCase();
+      if (currentOwnerRole !== 'STAFF' && currentOwnerRole !== 'ADMINISTRATOR') {
+        throw new BadRequestException('Properti ini tidak tersedia untuk diklaim.');
+      }
+    }
+    const preferredDate = (body.preferredDate || '').trim();
     const nextPhone = (body.phone || user.phone || '').trim();
     if (!nextPhone || nextPhone.length < 8) {
       throw new BadRequestException(
@@ -599,10 +624,7 @@ export class UsersService implements OnModuleInit {
     user.phone = nextPhone;
     user.verificationStatus = 'PENDING';
     user.verificationSurveyDate = preferredDate;
-    user.verificationKostId =
-      body.kostId !== undefined && body.kostId !== null && Number(body.kostId) > 0
-        ? Number(body.kostId)
-        : null;
+    user.verificationKostId = requestedKostId;
     user.verificationNotes = (body.notes || '').trim();
     user.verificationRejectionReason = '';
     return this.userRepository.save(user);
@@ -619,8 +641,11 @@ export class UsersService implements OnModuleInit {
     const user = await this.findOne(id);
     const normalizedStatus = (params.status || '').trim().toUpperCase();
     if (normalizedStatus === 'REJECTED') {
-      user.isVerified = false;
+      if (!user.verificationKostId) {
+        user.isVerified = false;
+      }
       user.verificationStatus = 'REJECTED';
+      user.verificationKostId = null;
       user.verificationRejectionReason = (params.rejectionReason || '').trim();
       return this.userRepository.save(user);
     }
@@ -628,6 +653,31 @@ export class UsersService implements OnModuleInit {
       params.isVerified !== undefined
         ? Boolean(params.isVerified)
         : normalizedStatus === 'VERIFIED';
+    if (verified && user.verificationKostId) {
+      const targetKost = await this.kostRepository.findOne({
+        where: { id: user.verificationKostId },
+      });
+      if (targetKost && targetKost.ownerId !== user.id) {
+        const currentOwner = targetKost.ownerId
+          ? await this.userRepository.findOne({ where: { id: targetKost.ownerId } })
+          : null;
+        const currentOwnerRole = (currentOwner?.role || '').toUpperCase();
+        if (currentOwnerRole === 'STAFF' || currentOwnerRole === 'ADMINISTRATOR') {
+          targetKost.ownerId = user.id;
+          targetKost.ownerName = user.name.trim() || targetKost.ownerName;
+          if (user.phone && user.phone.trim()) {
+            targetKost.ownerPhone = user.phone.trim();
+          }
+          await this.kostRepository.save(targetKost);
+          if ((user.role || '').toUpperCase() === 'PENYEWA') {
+            user.role = 'PEMILIK_KOST';
+          }
+        }
+      }
+      user.verificationKostId = null;
+    } else if (!verified) {
+      user.verificationKostId = null;
+    }
     user.isVerified = verified;
     user.verificationStatus = verified ? 'VERIFIED' : 'NONE';
     user.verificationRejectionReason = '';
