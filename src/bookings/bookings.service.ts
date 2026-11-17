@@ -425,6 +425,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     durationCount: number;
     notes?: string;
     usePoints?: boolean;
+    paymentScheme?: 'FULL' | 'DP';
   }): Promise<Booking> {
     const kost = await this.kostsService.findOne(params.kostId);
     if (kost.ownerId === params.userId) {
@@ -484,10 +485,19 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const baseTotalAmount = unitPrice * durationCount;
+    const canUseDp = !isDaily && (durationCount > 1 || isYearly);
+    const effectiveScheme: 'FULL' | 'DP' =
+      canUseDp && params.paymentScheme === 'DP' ? 'DP' : 'FULL';
+    const payableRent =
+      effectiveScheme === 'DP'
+        ? Math.round(baseTotalAmount * 0.3)
+        : baseTotalAmount;
+    const remainingAmount = Math.max(0, baseTotalAmount - payableRent);
+
     const basePlatformFee = Math.round(
-      (baseTotalAmount * BOOKING_PLATFORM_FEE_PERCENT) / 100,
+      (payableRent * BOOKING_PLATFORM_FEE_PERCENT) / 100,
     );
-    const ownerNetAmount = baseTotalAmount - basePlatformFee;
+    const ownerNetAmount = payableRent - basePlatformFee;
 
     const user = await this.userRepository.findOne({
       where: { id: params.userId },
@@ -497,57 +507,47 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     let pointsDiscountAmount = 0;
     if (params.usePoints && user && Number(user.pointsBalance ?? 0) > 0) {
       const maxDiscount = Math.floor(basePlatformFee * 0.5);
-      const maxPointsAllowed = Math.floor(maxDiscount / POINT_RUPIAH_VALUE);
+      const pointCapByPayable = Math.max(0, payableRent - 1000);
+      const maxPointsAllowed = Math.floor(
+        Math.min(maxDiscount, pointCapByPayable) / POINT_RUPIAH_VALUE,
+      );
       pointsUsed = Math.min(Number(user.pointsBalance ?? 0), maxPointsAllowed);
       pointsDiscountAmount = pointsUsed * POINT_RUPIAH_VALUE;
     }
 
-    const rawNet = baseTotalAmount - pointsDiscountAmount;
-    const totalAmount = Math.max(1000, rawNet);
+    const netRentPayNow = Math.max(1000, payableRent - pointsDiscountAmount);
+    const serviceFee = Math.max(5000, Math.round(netRentPayNow * 0.025));
+    const paidAmount = netRentPayNow + serviceFee;
+    const totalAmount = paidAmount;
     const platformFee = Math.max(0, basePlatformFee - pointsDiscountAmount);
 
     const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
     const paymentOrderId = `HNV-BOOK-${params.userId}-${Date.now()}-${randSuffix}`;
 
+    const unitLabel = isDaily ? 'Hari' : isYearly ? 'Tahun' : 'Bulan';
+    const schemeLabel = effectiveScheme === 'DP' ? 'DP 30%' : 'Full';
     const itemDetails: Array<{
       id: string;
       price: number;
       quantity: number;
       name: string;
-    }> =
-      rawNet >= 1000
-        ? [
-            {
-              id: `KOST-${kost.id}`,
-              price: unitPrice,
-              quantity: durationCount,
-              name: `${kost.name} (${durationCount} ${isDaily ? 'Hari' : 'Bulan'})`.slice(
-                0,
-                50,
-              ),
-            },
-            ...(pointsDiscountAmount > 0
-              ? [
-                  {
-                    id: 'KEYLOKA-POINTS-DISCOUNT',
-                    price: -pointsDiscountAmount,
-                    quantity: 1,
-                    name: `Potongan ${pointsUsed} Poin Keyloka`,
-                  },
-                ]
-              : []),
-          ]
-        : [
-            {
-              id: `KOST-${kost.id}`,
-              price: totalAmount,
-              quantity: 1,
-              name: `${kost.name} (${durationCount} ${isDaily ? 'Hari' : 'Bulan'})`.slice(
-                0,
-                50,
-              ),
-            },
-          ];
+    }> = [
+      {
+        id: `KOST-${kost.id}`,
+        price: netRentPayNow,
+        quantity: 1,
+        name: `${kost.name} (${durationCount} ${unitLabel} - ${schemeLabel})`.slice(
+          0,
+          50,
+        ),
+      },
+      {
+        id: 'KEYLOKA-SERVICE-FEE',
+        price: serviceFee,
+        quantity: 1,
+        name: 'Biaya Layanan & Transaksi Escrow',
+      },
+    ];
 
     const { serverKey, snapUrl } = this.midtransConfig;
     const snapPayload = {
@@ -628,6 +628,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         totalAmount,
         platformFee,
         ownerNetAmount,
+        serviceFee,
+        paymentScheme: effectiveScheme,
+        paidAmount,
+        remainingAmount,
         paymentOrderId,
         snapToken: data.token,
         paymentUrl: data.redirect_url,

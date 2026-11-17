@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -71,4 +72,8 @@ export class CreateDirectBookingDto {
   @IsOptional()
   @IsBoolean()
   usePoints?: boolean;
+
+  @IsOptional()
+  @IsIn(['FULL', 'DP'])
+  paymentScheme?: 'FULL' | 'DP';
 }

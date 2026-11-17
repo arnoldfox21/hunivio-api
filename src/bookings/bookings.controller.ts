@@ -51,6 +51,7 @@ export class BookingsController {
       durationCount: body.durationCount,
       notes: body.notes,
       usePoints: Boolean(body.usePoints),
+      paymentScheme: body.paymentScheme,
     });
   }
 

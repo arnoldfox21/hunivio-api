@@ -63,6 +63,18 @@ export class Booking {
   @Column({ type: 'int', default: 0 })
   ownerNetAmount: number;
 
+  @Column({ type: 'int', default: 0 })
+  serviceFee: number;
+
+  @Column({ type: 'varchar', length: 16, default: 'FULL' })
+  paymentScheme: string; // 'FULL' | 'DP'
+
+  @Column({ type: 'int', default: 0 })
+  paidAmount: number;
+
+  @Column({ type: 'int', default: 0 })
+  remainingAmount: number;
+
   @Index()
   @Column({ type: 'varchar', nullable: true })
   paymentOrderId: string | null;
