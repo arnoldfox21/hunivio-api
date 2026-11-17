@@ -83,6 +83,21 @@ export class StorageService {
     };
   }
 
+  /**
+   * Normalizes a stored image value: if it is a relative R2 key/path
+   * (e.g. `/kosts/...` or `kosts/...`) and `R2_PUBLIC_URL` is configured,
+   * returns the full public URL; otherwise returns the trimmed value as-is.
+   */
+  resolvePublicUrl(value: string): string {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed || !this.publicUrl) return trimmed;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (trimmed.startsWith('/kosts/') || trimmed.startsWith('kosts/')) {
+      return `${this.publicUrl}/${trimmed.replace(/^\/+/, '')}`;
+    }
+    return trimmed;
+  }
+
   async deleteByUrl(url: string): Promise<void> {
     if (!this.client || !url) return;
 

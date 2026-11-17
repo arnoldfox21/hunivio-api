@@ -509,8 +509,19 @@ export class KostsService implements OnModuleInit {
     return kosts;
   }
 
+  private normalizeKostImages(kosts: Kost[]): void {
+    for (const k of kosts) {
+      if (Array.isArray(k.images)) {
+        k.images = k.images.map((img) =>
+          this.storageService.resolvePublicUrl(img),
+        );
+      }
+    }
+  }
+
   async syncOwnerNames(kosts: Kost[]): Promise<Kost[]> {
     if (kosts.length === 0) return kosts;
+    this.normalizeKostImages(kosts);
     const ownerIds = Array.from(
       new Set(kosts.map((k) => k.ownerId).filter((id) => id > 0)),
     );
@@ -1078,6 +1089,7 @@ export class KostsService implements OnModuleInit {
         );
       }
     }
+    this.normalizeKostImages([saved]);
     return saved;
   }
 
@@ -1211,10 +1223,10 @@ export class KostsService implements OnModuleInit {
         if (!value) continue;
         if (/^data:image\//i.test(value)) {
           const uploaded = await this.uploadBase64Image(value);
-          resolved.push(uploaded.path);
-          uploadedPaths.push(uploaded.path);
+          resolved.push(uploaded.url);
+          uploadedPaths.push(uploaded.url);
         } else {
-          resolved.push(value);
+          resolved.push(this.storageService.resolvePublicUrl(value));
         }
       }
       return { resolved, uploadedPaths };
