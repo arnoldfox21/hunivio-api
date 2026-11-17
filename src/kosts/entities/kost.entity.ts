@@ -92,7 +92,7 @@ export class Kost {
   @Column({ default: false })
   hasCarport: boolean;
 
-  @Column({ default: true })
+  @Column({ default: false })
   isVerified: boolean;
 
   @Column({ default: false })
