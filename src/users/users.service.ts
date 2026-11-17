@@ -19,6 +19,7 @@ import {
   SetPasswordDto,
 } from './dto/google-auth.dto';
 import { signAuthToken } from '../auth/jwt.util';
+import { StorageService } from '../storage/storage.service';
 
 export const GOOGLE_OAUTH_CONFIG = {
   clientId:
@@ -34,6 +35,7 @@ export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly storageService: StorageService,
   ) {}
 
   async onModuleInit() {
@@ -415,6 +417,8 @@ export class UsersService implements OnModuleInit {
     if (dto.city !== undefined) {
       user.city = dto.city.trim();
     }
+    const previousAvatar = user.avatarUrl;
+    const previousCover = user.coverUrl;
     if (dto.avatarUrl !== undefined && dto.avatarUrl.trim().length > 0) {
       user.avatarUrl = dto.avatarUrl.trim();
     }
@@ -424,7 +428,14 @@ export class UsersService implements OnModuleInit {
     if (dto.fcmToken !== undefined) {
       user.fcmToken = dto.fcmToken.trim();
     }
-    return this.userRepository.save(user);
+    const saved = await this.userRepository.save(user);
+    if (previousAvatar && previousAvatar !== saved.avatarUrl) {
+      void this.storageService.deleteByUrl(previousAvatar);
+    }
+    if (previousCover && previousCover !== saved.coverUrl) {
+      void this.storageService.deleteByUrl(previousCover);
+    }
+    return saved;
   }
 
   async updateUserRole(id: number, dto: UpdateUserRoleDto): Promise<User> {
@@ -642,7 +653,13 @@ export class UsersService implements OnModuleInit {
         'Akun Administrator lain tidak dapat dihapus.',
       );
     }
+    const imagesToDelete = [user.avatarUrl, user.coverUrl].filter(Boolean);
     await this.userRepository.remove(user);
+    if (imagesToDelete.length > 0) {
+      void Promise.allSettled(
+        imagesToDelete.map((url) => this.storageService.deleteByUrl(url)),
+      );
+    }
     return { deleted: true, id };
   }
 }

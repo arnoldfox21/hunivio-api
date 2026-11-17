@@ -12,6 +12,7 @@ import { OwnerPostLike } from './entities/owner-post-like.entity';
 import { User } from '../users/entities/user.entity';
 import { Kost } from '../kosts/entities/kost.entity';
 import { CreateOwnerPostDto, UpdateOwnerPostDto } from './dto/owner-post.dto';
+import { StorageService } from '../storage/storage.service';
 
 export interface OwnerPostResponse {
   id: number;
@@ -53,6 +54,7 @@ export class PostsService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Kost)
     private readonly kostRepository: Repository<Kost>,
+    private readonly storageService: StorageService,
   ) {}
 
   private async attachKostMetadata(
@@ -219,6 +221,7 @@ export class PostsService {
       post.content = trimmed;
     }
 
+    const previousImageUrl = post.imageUrl;
     if (dto.imageUrl !== undefined) {
       post.imageUrl = dto.imageUrl.trim() || null;
     }
@@ -240,6 +243,13 @@ export class PostsService {
     }
 
     const saved = await this.postRepository.save(post);
+    if (
+      dto.imageUrl !== undefined &&
+      previousImageUrl &&
+      previousImageUrl !== saved.imageUrl
+    ) {
+      void this.storageService.deleteByUrl(previousImageUrl);
+    }
     const [enriched] = await this.attachKostMetadata([saved]);
     return enriched;
   }
@@ -250,10 +260,14 @@ export class PostsService {
       throw new NotFoundException('Postingan tidak ditemukan.');
     }
 
+    const imageUrlToDelete = post.imageUrl;
     await this.verifyPostEditor(post, requesterId);
     await this.commentRepository.delete({ postId: id });
     await this.likeRepository.delete({ postId: id });
     await this.postRepository.remove(post);
+    if (imageUrlToDelete) {
+      void this.storageService.deleteByUrl(imageUrlToDelete);
+    }
     return { deleted: true };
   }
 

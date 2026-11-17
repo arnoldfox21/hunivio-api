@@ -16,6 +16,8 @@ import { UpdateKostDto } from './dto/update-kost.dto';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
 import { toTitleCaseRegion } from '../common/region-format.util';
 import { StorageService } from '../storage/storage.service';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const sharp = require('sharp') as typeof import('sharp').default;
 import {
   EXTRA_PROPERTY_SLOT_FEE,
   FREE_PROPERTY_QUOTA,
@@ -861,29 +863,42 @@ export class KostsService implements OnModuleInit {
         });
       }
 
-      const kost = kostRepo.create({
-        ...dto,
-        propertyCategory: category,
-        pricePerMonth:
-          category === 'HUNIAN_HARIAN' || category === 'KONTRAKAN'
-            ? 0
-            : (dto.pricePerMonth ?? 0),
-        city: toTitleCaseRegion(dto.city),
-        district: toTitleCaseRegion(dto.district),
-        ownerId,
-        ownerName: creator?.name?.trim() || dto.ownerName || 'Pengelola Kost',
-        ownerPhone:
-          dto.ownerPhone?.trim() || creator?.phone?.trim() || '6281234567890',
-        slug,
-        approvalStatus: isAutoApproved ? 'APPROVED' : 'PENDING',
-        allowDirectBooking: isAutoApproved
-          ? Boolean(dto.allowDirectBooking)
-          : false,
-        rejectionReason: '',
-      });
-      const saved = await kostRepo.save(kost);
-      this._filtersCache.clear();
-      return saved;
+      const { resolved: resolvedImages, uploadedPaths } =
+        await this.resolveImages(dto.images);
+
+      try {
+        const kost = kostRepo.create({
+          ...dto,
+          images: resolvedImages,
+          propertyCategory: category,
+          pricePerMonth:
+            category === 'HUNIAN_HARIAN' || category === 'KONTRAKAN'
+              ? 0
+              : (dto.pricePerMonth ?? 0),
+          city: toTitleCaseRegion(dto.city),
+          district: toTitleCaseRegion(dto.district),
+          ownerId,
+          ownerName: creator?.name?.trim() || dto.ownerName || 'Pengelola Kost',
+          ownerPhone:
+            dto.ownerPhone?.trim() || creator?.phone?.trim() || '6281234567890',
+          slug,
+          approvalStatus: isAutoApproved ? 'APPROVED' : 'PENDING',
+          allowDirectBooking: isAutoApproved
+            ? Boolean(dto.allowDirectBooking)
+            : false,
+          rejectionReason: '',
+        });
+        const saved = await kostRepo.save(kost);
+        this._filtersCache.clear();
+        return saved;
+      } catch (err) {
+        if (uploadedPaths.length > 0) {
+          void Promise.allSettled(
+            uploadedPaths.map((p) => this.storageService.deleteByUrl(p)),
+          );
+        }
+        throw err;
+      }
     });
   }
 
@@ -1036,7 +1051,23 @@ export class KostsService implements OnModuleInit {
         kost.rejectionReason = '';
       }
     }
-    const saved = await this.kostRepository.save(kost);
+    let newlyUploadedPaths: string[] = [];
+    if (dto.images !== undefined) {
+      const { resolved, uploadedPaths } = await this.resolveImages(dto.images);
+      kost.images = resolved;
+      newlyUploadedPaths = uploadedPaths;
+    }
+    let saved: Kost;
+    try {
+      saved = await this.kostRepository.save(kost);
+    } catch (err) {
+      if (newlyUploadedPaths.length > 0) {
+        void Promise.allSettled(
+          newlyUploadedPaths.map((p) => this.storageService.deleteByUrl(p)),
+        );
+      }
+      throw err;
+    }
     this._filtersCache.clear();
     if (dto.images !== undefined) {
       const nextSet = new Set(Array.isArray(saved.images) ? saved.images : []);
@@ -1069,5 +1100,131 @@ export class KostsService implements OnModuleInit {
     reviewCount: number,
   ): Promise<void> {
     await this.kostRepository.update(id, { rating, reviewCount });
+  }
+
+  /**
+   * Validates a base64 image payload, converts it to WebP via sharp (with original fallback),
+   * and uploads it to R2 storage.
+   */
+  async uploadBase64Image(rawBase64: string): Promise<{
+    url: string;
+    path: string;
+    sizeBytes: number;
+  }> {
+    const trimmed = rawBase64?.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Data gambar base64 wajib diisi');
+    }
+
+    const base64Data = trimmed.includes(',')
+      ? trimmed.split(',').pop() || ''
+      : trimmed;
+    const buffer = Buffer.from(base64Data, 'base64');
+    if (buffer.length === 0) {
+      throw new BadRequestException('Format gambar tidak valid');
+    }
+    if (buffer.length > 8 * 1024 * 1024) {
+      throw new BadRequestException('Ukuran gambar mentah maksimal 8 MB');
+    }
+
+    const isJpeg =
+      buffer.length >= 3 &&
+      buffer[0] === 0xff &&
+      buffer[1] === 0xd8 &&
+      buffer[2] === 0xff;
+    const isPng =
+      buffer.length >= 4 &&
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47;
+    const isWebp =
+      buffer.length >= 12 &&
+      buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+
+    if (!isJpeg && !isPng && !isWebp) {
+      throw new BadRequestException(
+        'File bukan gambar JPEG, PNG, atau WebP yang valid',
+      );
+    }
+
+    const fallbackExt = isPng ? 'png' : isWebp ? 'webp' : 'jpg';
+    let outputBuffer: Buffer = buffer;
+    let outputExt = fallbackExt;
+    try {
+      outputBuffer = await sharp(buffer, { limitInputPixels: 100_000_000 })
+        .rotate()
+        .resize({
+          width: 1440,
+          height: 1440,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .webp({ quality: 80, effort: 4 })
+        .toBuffer();
+      outputExt = 'webp';
+    } catch (err) {
+      console.warn(
+        `[upload-image] sharp gagal memproses gambar, fallback ke file asli (${fallbackExt}):`,
+        err instanceof Error ? err.message : err,
+      );
+      outputBuffer = buffer;
+      outputExt = fallbackExt;
+    }
+
+    const contentType =
+      outputExt === 'webp'
+        ? 'image/webp'
+        : outputExt === 'png'
+          ? 'image/png'
+          : 'image/jpeg';
+    const key = this.storageService.buildKostImageKey(outputExt);
+    const uploaded = await this.storageService.uploadBuffer(
+      outputBuffer,
+      key,
+      contentType,
+    );
+
+    return {
+      url: uploaded.url,
+      path: `/${uploaded.key}`,
+      sizeBytes: uploaded.sizeBytes,
+    };
+  }
+
+  /**
+   * Resolves an images array during property create/update: uploads any inline
+   * `data:image/...` payloads to R2 and preserves existing URLs/paths.
+   */
+  private async resolveImages(
+    images?: string[],
+  ): Promise<{ resolved: string[]; uploadedPaths: string[] }> {
+    if (!Array.isArray(images) || images.length === 0) {
+      return { resolved: [], uploadedPaths: [] };
+    }
+    const resolved: string[] = [];
+    const uploadedPaths: string[] = [];
+    try {
+      for (const item of images) {
+        const value = typeof item === 'string' ? item.trim() : '';
+        if (!value) continue;
+        if (/^data:image\//i.test(value)) {
+          const uploaded = await this.uploadBase64Image(value);
+          resolved.push(uploaded.path);
+          uploadedPaths.push(uploaded.path);
+        } else {
+          resolved.push(value);
+        }
+      }
+      return { resolved, uploadedPaths };
+    } catch (err) {
+      if (uploadedPaths.length > 0) {
+        void Promise.allSettled(
+          uploadedPaths.map((p) => this.storageService.deleteByUrl(p)),
+        );
+      }
+      throw err;
+    }
   }
 }

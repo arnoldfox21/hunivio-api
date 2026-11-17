@@ -84,11 +84,18 @@ export class StorageService {
   }
 
   async deleteByUrl(url: string): Promise<void> {
-    if (!this.client || !url || !this.publicUrl) return;
-    const prefix = `${this.publicUrl}/`;
-    if (!url.startsWith(prefix)) return;
+    if (!this.client || !url) return;
 
-    const key = url.slice(prefix.length).split('?')[0];
+    const trimmed = url.trim();
+    let key = '';
+    const prefix = this.publicUrl ? `${this.publicUrl}/` : '';
+    if (prefix && trimmed.startsWith(prefix)) {
+      key = trimmed.slice(prefix.length).split('?')[0];
+    } else if (trimmed.startsWith('/kosts/')) {
+      key = trimmed.slice(1).split('?')[0];
+    } else if (trimmed.startsWith('kosts/')) {
+      key = trimmed.split('?')[0];
+    }
     if (!key) return;
 
     try {

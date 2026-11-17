@@ -17,8 +17,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const sharp = require('sharp') as typeof import('sharp').default;
 import { KostsService } from './kosts.service';
 import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
@@ -190,87 +188,7 @@ export class KostsController {
     @Req() req: AuthenticatedRequest,
   ) {
     checkUploadRateLimit(req.user.userId);
-
-    const rawBase64 = body?.base64?.trim();
-    if (!rawBase64) {
-      throw new BadRequestException('Data gambar base64 wajib diisi');
-    }
-
-    const base64Data = rawBase64.includes(',')
-      ? rawBase64.split(',').pop() || ''
-      : rawBase64;
-    const buffer = Buffer.from(base64Data, 'base64');
-    if (buffer.length === 0) {
-      throw new BadRequestException('Format gambar tidak valid');
-    }
-    if (buffer.length > 8 * 1024 * 1024) {
-      throw new BadRequestException('Ukuran gambar mentah maksimal 8 MB');
-    }
-
-    const isJpeg =
-      buffer.length >= 3 &&
-      buffer[0] === 0xff &&
-      buffer[1] === 0xd8 &&
-      buffer[2] === 0xff;
-    const isPng =
-      buffer.length >= 4 &&
-      buffer[0] === 0x89 &&
-      buffer[1] === 0x50 &&
-      buffer[2] === 0x4e &&
-      buffer[3] === 0x47;
-    const isWebp =
-      buffer.length >= 12 &&
-      buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
-      buffer.subarray(8, 12).toString('ascii') === 'WEBP';
-
-    if (!isJpeg && !isPng && !isWebp) {
-      throw new BadRequestException(
-        'File bukan gambar JPEG, PNG, atau WebP yang valid',
-      );
-    }
-
-    const fallbackExt = isPng ? 'png' : isWebp ? 'webp' : 'jpg';
-    let outputBuffer: Buffer = buffer;
-    let outputExt = fallbackExt;
-    try {
-      outputBuffer = await sharp(buffer, { limitInputPixels: 100_000_000 })
-        .rotate()
-        .resize({
-          width: 1440,
-          height: 1440,
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
-        .webp({ quality: 80, effort: 4 })
-        .toBuffer();
-      outputExt = 'webp';
-    } catch (err) {
-      console.warn(
-        `[upload-image] sharp gagal memproses gambar, fallback ke file asli (${fallbackExt}):`,
-        err instanceof Error ? err.message : err,
-      );
-      outputBuffer = buffer;
-      outputExt = fallbackExt;
-    }
-
-    const contentType =
-      outputExt === 'webp'
-        ? 'image/webp'
-        : outputExt === 'png'
-          ? 'image/png'
-          : 'image/jpeg';
-    const key = this.storageService.buildKostImageKey(outputExt);
-    const uploaded = await this.storageService.uploadBuffer(
-      outputBuffer,
-      key,
-      contentType,
-    );
-
-    return {
-      url: uploaded.url,
-      path: `/${uploaded.key}`,
-      sizeBytes: uploaded.sizeBytes,
-    };
+    return this.kostsService.uploadBase64Image(body?.base64 || '');
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
