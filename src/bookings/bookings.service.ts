@@ -466,6 +466,21 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    const existingSameKostUnpaid = await this.bookingRepository.findOne({
+      where: {
+        userId: params.userId,
+        kostId: params.kostId,
+        bookingType: 'SEWA',
+        paymentStatus: 'UNPAID',
+        status: In(['MENUNGGU_PEMBAYARAN', 'TERKIRIM']),
+      },
+    });
+    if (existingSameKostUnpaid) {
+      throw new BadRequestException(
+        'Anda masih memiliki booking yang menunggu pembayaran untuk properti ini. Silakan lanjutkan pembayaran atau batalkan di halaman Booking.',
+      );
+    }
+
     const unpaidCount = await this.bookingRepository.count({
       where: {
         userId: params.userId,
