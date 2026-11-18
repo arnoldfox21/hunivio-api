@@ -21,7 +21,7 @@ import { KostsService } from '../kosts/kosts.service';
 import { ChatsService } from '../chats/chats.service';
 import { ChatsGateway } from '../chats/chats.gateway';
 
-export const BOOKING_PLATFORM_FEE_PERCENT = 5;
+export const BOOKING_PLATFORM_FEE_PERCENT = 1;
 export const POINT_RUPIAH_VALUE = 50; // 1 poin = Rp50
 export const RUPIAH_PER_POINT_EARNED = 10000; // Rp10.000 = 1 poin
 
