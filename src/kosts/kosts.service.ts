@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { Kost } from './entities/kost.entity';
+import { KostReport } from './entities/kost-report.entity';
 import { Facility } from './entities/facility.entity';
 import { UserFavorite } from './entities/user-favorite.entity';
 import { User } from '../users/entities/user.entity';
@@ -29,6 +30,8 @@ export class KostsService implements OnModuleInit {
   constructor(
     @InjectRepository(Kost)
     private readonly kostRepository: Repository<Kost>,
+    @InjectRepository(KostReport)
+    private readonly kostReportRepository: Repository<KostReport>,
     @InjectRepository(Facility)
     private readonly facilityRepository: Repository<Facility>,
     @InjectRepository(UserFavorite)
@@ -1247,5 +1250,137 @@ export class KostsService implements OnModuleInit {
       }
       throw err;
     }
+  }
+
+  /**
+   * Saves a property report from a logged-in user or anonymous visitor,
+   * verifying Google reCAPTCHA when `RECAPTCHA_SECRET_KEY` is configured.
+   */
+  async reportKost(
+    kostId: number,
+    payload: {
+      reason?: string;
+      details?: string;
+      recaptchaToken?: string;
+      reporterId?: number | null;
+    },
+  ) {
+    const kost = await this.kostRepository.findOne({ where: { id: kostId } });
+    if (!kost) throw new NotFoundException('Properti tidak ditemukan');
+
+    const reason = (payload.reason || '').trim().slice(0, 120);
+    if (!reason) {
+      throw new BadRequestException('Alasan laporan wajib diisi.');
+    }
+
+    const secret = (process.env.RECAPTCHA_SECRET_KEY || '').trim();
+    if (secret) {
+      const token = (payload.recaptchaToken || '').trim();
+      if (!token) {
+        throw new BadRequestException('Harap selesaikan verifikasi reCAPTCHA.');
+      }
+      const verifyRes = await fetch(
+        'https://www.google.com/recaptcha/api/siteverify',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ secret, response: token }).toString(),
+        },
+      );
+      const verifyJson = (await verifyRes.json().catch(() => ({}))) as {
+        success?: boolean;
+        score?: number;
+      };
+      if (
+        !verifyJson.success ||
+        (typeof verifyJson.score === 'number' && verifyJson.score < 0.3)
+      ) {
+        throw new BadRequestException(
+          'Verifikasi reCAPTCHA gagal. Silakan coba lagi.',
+        );
+      }
+    }
+
+    let reporterId: number | null = null;
+    let reporterName: string | null = null;
+    let reporterEmail: string | null = null;
+
+    if (payload.reporterId) {
+      const user = await this.userRepository.findOne({
+        where: { id: payload.reporterId },
+      });
+      if (user) {
+        reporterId = user.id;
+        reporterName = user.name || null;
+        reporterEmail = user.email || null;
+
+        const existing = await this.kostReportRepository.findOne({
+          where: { kostId, reporterId: user.id, status: 'OPEN' },
+        });
+        if (existing) {
+          throw new BadRequestException(
+            'Anda sudah melaporkan properti ini sebelumnya.',
+          );
+        }
+      }
+    }
+
+    const report = this.kostReportRepository.create({
+      kostId,
+      reporterId,
+      reporterName,
+      reporterEmail,
+      reason,
+      details: payload.details?.trim() || null,
+      status: 'OPEN',
+    });
+    const saved = await this.kostReportRepository.save(report);
+    return { success: true, id: saved.id };
+  }
+
+  /**
+   * Lists open property reports for Staff/Admin moderation.
+   */
+  async findOpenReports() {
+    const reports = await this.kostReportRepository.find({
+      where: { status: 'OPEN' },
+      order: { createdAt: 'DESC' },
+    });
+    if (reports.length === 0) return [];
+
+    const kostIds = Array.from(new Set(reports.map((r) => r.kostId)));
+    const kosts = await this.kostRepository.find({
+      where: { id: In(kostIds) },
+    });
+    const kostMap = new Map(kosts.map((k) => [k.id, k]));
+
+    return reports.map((report) => {
+      const kost = kostMap.get(report.kostId);
+      return {
+        id: report.id,
+        kostId: report.kostId,
+        kostName: kost?.name || `Properti #${report.kostId}`,
+        kostCity: kost?.city || '',
+        kostDistrict: kost?.district || '',
+        kostOwnerName: kost?.ownerName || '',
+        reporterId: report.reporterId,
+        reporterName: report.reporterName || null,
+        reporterEmail: report.reporterEmail || null,
+        reason: report.reason,
+        details: report.details,
+        status: report.status,
+        createdAt: report.createdAt,
+      };
+    });
+  }
+
+  async dismissReport(reportId: number) {
+    const report = await this.kostReportRepository.findOne({
+      where: { id: reportId },
+    });
+    if (!report) throw new NotFoundException('Laporan tidak ditemukan');
+    report.status = 'DISMISSED';
+    await this.kostReportRepository.save(report);
+    return { success: true };
   }
 }

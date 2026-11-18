@@ -151,6 +151,42 @@ export class KostsController {
     return this.kostsService.getMasterFacilities(category, unitType);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Get('reports')
+  findOpenReports() {
+    return this.kostsService.findOpenReports();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('STAFF', 'ADMINISTRATOR')
+  @Patch('reports/:reportId/dismiss')
+  dismissReport(@Param('reportId', ParseIntPipe) reportId: number) {
+    return this.kostsService.dismissReport(reportId);
+  }
+
+  @Post(':id/report')
+  report(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      reason: string;
+      details?: string;
+      recaptchaToken?: string;
+    },
+    @Req() req: Request,
+  ) {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+    const authUser = token ? verifyAuthToken(token) : null;
+    return this.kostsService.reportKost(id, {
+      ...body,
+      reporterId: authUser?.userId ?? null,
+    });
+  }
+
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
     const authHeader = req.headers.authorization || '';

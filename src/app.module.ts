@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Kost } from './kosts/entities/kost.entity';
+import { KostReport } from './kosts/entities/kost-report.entity';
 import { Facility } from './kosts/entities/facility.entity';
 import { UserFavorite } from './kosts/entities/user-favorite.entity';
 import { Booking } from './bookings/entities/booking.entity';
@@ -48,6 +49,7 @@ import { StorageModule } from './storage/storage.module';
                 : false,
             entities: [
               Kost,
+              KostReport,
               Facility,
               UserFavorite,
               Booking,
@@ -78,6 +80,7 @@ import { StorageModule } from './storage/storage.module';
             database: process.env.DB_DATABASE || 'kost2u_db',
             entities: [
               Kost,
+              KostReport,
               Facility,
               UserFavorite,
               Booking,
