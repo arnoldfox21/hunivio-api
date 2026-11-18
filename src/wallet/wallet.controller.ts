@@ -94,12 +94,18 @@ export class WalletController {
   @Patch('payout-requests/:id/process')
   processPayoutRequest(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { action: 'APPROVE' | 'REJECT'; adminNote?: string },
+    @Body()
+    body: {
+      action: 'APPROVE' | 'REJECT';
+      adminNote?: string;
+      revisedAmount?: number;
+    },
   ) {
     return this.walletService.processPayoutRequest(
       id,
       body.action,
       body.adminNote,
+      body.revisedAmount,
     );
   }
 }

@@ -644,6 +644,7 @@ export class WalletService {
     id: number,
     action: 'APPROVE' | 'REJECT',
     adminNote?: string,
+    revisedAmount?: number,
   ) {
     const upperAction = (action || '').toUpperCase();
     if (upperAction !== 'APPROVE' && upperAction !== 'REJECT') {
@@ -679,6 +680,32 @@ export class WalletService {
         }
         req.status = 'REJECTED';
       } else {
+        if (revisedAmount !== undefined && revisedAmount !== null) {
+          const parsed = Math.round(Number(revisedAmount));
+          if (!Number.isFinite(parsed) || parsed < 10000) {
+            throw new BadRequestException(
+              'Nominal revisi minimal Rp10.000.',
+            );
+          }
+          const diff = parsed - Number(req.amount);
+          if (diff !== 0) {
+            const user = await userRepo.findOne({
+              where: { id: req.userId },
+              lock: { mode: 'pessimistic_write' },
+            });
+            if (!user) {
+              throw new NotFoundException('Pemilik tidak ditemukan.');
+            }
+            if (diff > 0 && Number(user.payoutBalance ?? 0) < diff) {
+              throw new BadRequestException(
+                'Saldo pemilik tidak mencukupi untuk menaikkan nominal penarikan.',
+              );
+            }
+            user.payoutBalance = Number(user.payoutBalance ?? 0) - diff;
+            await userRepo.save(user);
+            req.amount = parsed;
+          }
+        }
         req.status = 'APPROVED';
       }
 
