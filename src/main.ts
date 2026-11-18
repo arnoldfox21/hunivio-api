@@ -36,30 +36,69 @@ async function bootstrap() {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
-  // Lightweight per-IP rate limiter for API endpoints to prevent overload
-  const ipHits = new Map<string, { count: number; resetAt: number }>();
-  app.use('/api', (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const now = Date.now();
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    const entry = ipHits.get(ip);
-    if (!entry || now > entry.resetAt) {
-      ipHits.set(ip, { count: 1, resetAt: now + 60_000 });
-      if (ipHits.size > 5000) {
-        for (const [k, v] of ipHits) {
-          if (now > v.resetAt) ipHits.delete(k);
+  // Lightweight per-IP rate limiter helper to prevent overload & abuse
+  const createIpRateLimiter = (
+    windowMs: number,
+    maxRequests: number,
+    message: string,
+  ): express.RequestHandler => {
+    const hits = new Map<string, { count: number; resetAt: number }>();
+    return (req, res, next) => {
+      const now = Date.now();
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const entry = hits.get(ip);
+      if (!entry || now > entry.resetAt) {
+        hits.set(ip, { count: 1, resetAt: now + windowMs });
+        if (hits.size > 5000) {
+          for (const [k, v] of hits) {
+            if (now > v.resetAt) hits.delete(k);
+          }
         }
+        return next();
+      }
+      entry.count += 1;
+      if (entry.count > maxRequests) {
+        return res.status(429).json({
+          statusCode: 429,
+          message,
+        });
       }
       return next();
-    }
-    entry.count += 1;
-    if (entry.count > 240) {
-      return res.status(429).json({
-        statusCode: 429,
-        message: 'Terlalu banyak permintaan. Coba lagi sebentar.',
-      });
-    }
-    return next();
-  });
+    };
+  };
+
+  app.use(
+    '/api/auth/login',
+    createIpRateLimiter(
+      60_000,
+      20,
+      'Terlalu banyak percobaan login. Tunggu 1 menit sebelum mencoba lagi.',
+    ),
+  );
+  app.use(
+    '/api/auth/google',
+    createIpRateLimiter(
+      60_000,
+      20,
+      'Terlalu banyak percobaan login Google. Tunggu 1 menit sebelum mencoba lagi.',
+    ),
+  );
+  app.use(
+    '/api/kosts/:id/report',
+    createIpRateLimiter(
+      60_000,
+      10,
+      'Terlalu banyak pengiriman laporan. Tunggu 1 menit sebelum mencoba lagi.',
+    ),
+  );
+  app.use(
+    '/api',
+    createIpRateLimiter(
+      60_000,
+      240,
+      'Terlalu banyak permintaan. Coba lagi sebentar.',
+    ),
+  );
   app.use(express.json({ limit: '15mb' }));
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
