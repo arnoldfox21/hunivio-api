@@ -256,6 +256,13 @@ export class WalletService {
     const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
     const orderId = `HNV-TOPUP-${userId}-${Date.now()}-${randSuffix}`;
 
+    const webBaseUrl = (
+      process.env.WEB_URL ||
+      process.env.FRONTEND_URL ||
+      'https://keyloka.com'
+    )
+      .trim()
+      .replace(/\/+$/, '');
     const snapPayload = {
       transaction_details: {
         order_id: orderId,
@@ -275,7 +282,7 @@ export class WalletService {
         phone: user.phone || undefined,
       },
       callbacks: {
-        finish: 'https://keyloka.app/payment/finish',
+        finish: `${webBaseUrl}/payment/finish`,
       },
     };
 

@@ -561,6 +561,13 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     ];
 
     const { serverKey, snapUrl } = this.midtransConfig;
+    const webBaseUrl = (
+      process.env.WEB_URL ||
+      process.env.FRONTEND_URL ||
+      'https://keyloka.com'
+    )
+      .trim()
+      .replace(/\/+$/, '');
     const snapPayload = {
       transaction_details: {
         order_id: paymentOrderId,
@@ -573,7 +580,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         phone: params.tenantPhone || user?.phone || undefined,
       },
       callbacks: {
-        finish: 'https://keyloka.app/payment/finish',
+        finish: `${webBaseUrl}/payment/finish`,
       },
     };
 
