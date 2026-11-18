@@ -864,14 +864,15 @@ export class KostsService implements OnModuleInit {
     const ownerId = dto.ownerId ?? 1;
     const creator = await this.userRepository.findOne({ where: { id: ownerId } });
     const creatorRole = (creator?.role || '').toUpperCase();
-    const isAutoApproved =
+    const isStaffOrAdmin =
       creatorRole === 'ADMINISTRATOR' || creatorRole === 'STAFF';
+    const isAutoApproved = isStaffOrAdmin || Boolean(creator?.isVerified);
 
     return this.dataSource.transaction(async (manager) => {
       const kostRepo = manager.getRepository(Kost);
       const existingCount = await kostRepo.count({ where: { ownerId } });
 
-      if (!isAutoApproved && existingCount >= FREE_PROPERTY_QUOTA) {
+      if (!isStaffOrAdmin && existingCount >= FREE_PROPERTY_QUOTA) {
         await this.walletService.deductCredit({
           userId: ownerId,
           amount: EXTRA_PROPERTY_SLOT_FEE,
@@ -901,6 +902,7 @@ export class KostsService implements OnModuleInit {
             dto.ownerPhone?.trim() || creator?.phone?.trim() || '6281234567890',
           slug,
           approvalStatus: isAutoApproved ? 'APPROVED' : 'PENDING',
+          isVerified: isAutoApproved,
           allowDirectBooking: isAutoApproved
             ? Boolean(dto.allowDirectBooking)
             : false,

@@ -259,7 +259,6 @@ export class KostsController {
     const isStaff = role === 'STAFF' || role === 'ADMINISTRATOR';
     const payload = { ...updateKostDto };
     if (!isStaff) {
-      delete payload.allowDirectBooking;
       delete payload.isVerified;
       delete payload.ownerId;
       delete (payload as Record<string, unknown>).approvalStatus;

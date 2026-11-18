@@ -87,6 +87,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           const locked = await bookingRepo.findOne({
             where: { id: b.id },
             lock: { mode: 'pessimistic_write' },
+            loadEagerRelations: false,
           });
           if (!locked || locked.escrowStatus !== 'HELD') return;
 
@@ -381,6 +382,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       const locked = await bookingRepo.findOne({
         where: { id },
         lock: { mode: 'pessimistic_write' },
+        loadEagerRelations: false,
       });
       if (!locked) {
         throw new NotFoundException(`Booking ID ${id} tidak ditemukan`);
@@ -512,7 +514,6 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const basePlatformFee = Math.round(
       (payableRent * BOOKING_PLATFORM_FEE_PERCENT) / 100,
     );
-    const ownerNetAmount = payableRent - basePlatformFee;
 
     const user = await this.userRepository.findOne({
       where: { id: params.userId },
@@ -532,9 +533,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
 
     const netRentPayNow = Math.max(1000, payableRent - pointsDiscountAmount);
     const serviceFee = Math.max(5000, Math.round(netRentPayNow * 0.025));
-    const paidAmount = netRentPayNow + serviceFee;
+    const paidAmount = netRentPayNow;
     const totalAmount = paidAmount;
     const platformFee = Math.max(0, basePlatformFee - pointsDiscountAmount);
+    const ownerNetAmount = Math.max(0, payableRent - basePlatformFee - serviceFee);
 
     const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
     const paymentOrderId = `HNV-BOOK-${params.userId}-${Date.now()}-${randSuffix}`;
@@ -555,12 +557,6 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           0,
           50,
         ),
-      },
-      {
-        id: 'KEYLOKA-SERVICE-FEE',
-        price: serviceFee,
-        quantity: 1,
-        name: 'Biaya Layanan & Transaksi Escrow',
       },
     ];
 
@@ -748,6 +744,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         const lockedBooking = await bookingRepo.findOne({
           where: { id: bookingId },
           lock: { mode: 'pessimistic_write' },
+          loadEagerRelations: false,
         });
         if (!lockedBooking) {
           throw new NotFoundException('Booking tidak ditemukan.');
@@ -795,6 +792,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         const locked = await bookingRepo.findOne({
           where: { id: bookingId },
           lock: { mode: 'pessimistic_write' },
+          loadEagerRelations: false,
         });
         if (!locked) return existing;
         if (locked.paymentStatus === 'UNPAID' && locked.pointsUsed > 0) {
@@ -848,6 +846,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         const lockedBooking = await bookingRepo.findOne({
           where: { id: existing.id },
           lock: { mode: 'pessimistic_write' },
+          loadEagerRelations: false,
         });
         if (!lockedBooking) {
           throw new NotFoundException('Booking tidak ditemukan.');
@@ -895,6 +894,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         const locked = await bookingRepo.findOne({
           where: { id: existing.id },
           lock: { mode: 'pessimistic_write' },
+          loadEagerRelations: false,
         });
         if (!locked) return existing;
         if (locked.paymentStatus === 'UNPAID' && locked.pointsUsed > 0) {
@@ -918,6 +918,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       const booking = await bookingRepo.findOne({
         where: { id: bookingId },
         lock: { mode: 'pessimistic_write' },
+        loadEagerRelations: false,
       });
       if (!booking) {
         throw new NotFoundException(`Booking ID ${bookingId} tidak ditemukan.`);
@@ -1003,6 +1004,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       const booking = await bookingRepo.findOne({
         where: { id: bookingId },
         lock: { mode: 'pessimistic_write' },
+        loadEagerRelations: false,
       });
       if (!booking) {
         throw new NotFoundException(`Booking ID ${bookingId} tidak ditemukan.`);
