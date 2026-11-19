@@ -29,6 +29,11 @@ export class BookingsController {
     @Body() dto: CreateBookingDto,
     @Req() req: AuthenticatedRequest,
   ) {
+    if ((req.user.role || '').toUpperCase() === 'PEMILIK_KOST') {
+      throw new ForbiddenException(
+        'Akun pemilik properti tidak dapat melakukan booking atau pengajuan survei.',
+      );
+    }
     return this.bookingsService.create({ ...dto, userId: req.user.userId });
   }
 
@@ -42,6 +47,11 @@ export class BookingsController {
     @Body() body: CreateDirectBookingDto,
     @Req() req: AuthenticatedRequest,
   ) {
+    if ((req.user.role || '').toUpperCase() === 'PEMILIK_KOST') {
+      throw new ForbiddenException(
+        'Akun pemilik properti tidak dapat melakukan booking atau pengajuan survei.',
+      );
+    }
     return this.bookingsService.createDirectBooking({
       userId: req.user.userId,
       kostId: body.kostId,

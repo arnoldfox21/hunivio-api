@@ -990,26 +990,27 @@ export class KostsService implements OnModuleInit {
           where: { id: kost.ownerId },
         });
         const token = owner?.fcmToken?.trim();
-        if (token) {
-          const title =
-            normalized === 'APPROVED'
-              ? 'Properti Disetujui'
-              : 'Properti Ditolak';
-          const body =
-            normalized === 'APPROVED'
-              ? `${kost.name} telah disetujui dan kini tampil di pencarian Keyloka.`
-              : `${kost.name} perlu diperbaiki${kost.rejectionReason ? `: ${kost.rejectionReason}` : '.'}`;
-          await this.firebaseNotificationService.sendGeneralNotification({
-            token,
-            title,
-            body,
-            data: {
-              type: 'property_approval',
-              kostId: String(kost.id),
-              receiverId: String(kost.ownerId),
-            },
-          });
-        }
+        const title =
+          normalized === 'APPROVED'
+            ? 'Properti Disetujui'
+            : 'Properti Ditolak';
+        const body =
+          normalized === 'APPROVED'
+            ? `${kost.name} telah disetujui dan kini tampil di pencarian Keyloka.`
+            : `${kost.name} perlu diperbaiki${kost.rejectionReason ? `: ${kost.rejectionReason}` : '.'}`;
+        await this.firebaseNotificationService.sendGeneralNotification({
+          token: token || '',
+          title,
+          body,
+          userId: kost.ownerId,
+          notifType: 'PROPERTY',
+          targetUrl: normalized === 'APPROVED' ? `/kost/${kost.id}` : '/dashboard',
+          data: {
+            type: 'property_approval',
+            kostId: String(kost.id),
+            receiverId: String(kost.ownerId),
+          },
+        });
       } catch {
         // Abaikan jika push gagal
       }

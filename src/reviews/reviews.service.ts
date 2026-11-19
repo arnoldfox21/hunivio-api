@@ -136,18 +136,19 @@ export class ReviewsService {
     try {
       if (kost.ownerId && kost.ownerId !== saved.userId) {
         const token = await this.usersService.getFcmToken(kost.ownerId);
-        if (token) {
-          await this.firebaseNotificationService.sendGeneralNotification({
-            token,
-            title: `Ulasan Baru • ${kost.name}`,
-            body: `${saved.userName} memberi rating ${saved.overallRating}★: "${saved.comment}"`,
-            data: {
-              type: 'review',
-              kostId: String(kost.id),
-              receiverId: String(kost.ownerId),
-            },
-          });
-        }
+        await this.firebaseNotificationService.sendGeneralNotification({
+          token: token || '',
+          title: `Ulasan Baru • ${kost.name}`,
+          body: `${saved.userName} memberi rating ${saved.overallRating}★: "${saved.comment}"`,
+          userId: kost.ownerId,
+          notifType: 'REVIEW',
+          targetUrl: `/kost/${kost.id}`,
+          data: {
+            type: 'review',
+            kostId: String(kost.id),
+            receiverId: String(kost.ownerId),
+          },
+        });
       }
     } catch {
       // Abaikan jika push gagal
@@ -193,18 +194,19 @@ export class ReviewsService {
     try {
       if (review.userId && review.userId !== requesterId) {
         const token = await this.usersService.getFcmToken(review.userId);
-        if (token) {
-          await this.firebaseNotificationService.sendGeneralNotification({
-            token,
-            title: `Balasan Pemilik • ${kost.name}`,
-            body: trimmed,
-            data: {
-              type: 'review_reply',
-              kostId: String(kost.id),
-              receiverId: String(review.userId),
-            },
-          });
-        }
+        await this.firebaseNotificationService.sendGeneralNotification({
+          token: token || '',
+          title: `Balasan Pemilik • ${kost.name}`,
+          body: trimmed,
+          userId: review.userId,
+          notifType: 'REVIEW',
+          targetUrl: `/kost/${kost.id}`,
+          data: {
+            type: 'review_reply',
+            kostId: String(kost.id),
+            receiverId: String(review.userId),
+          },
+        });
       }
     } catch {
       // Abaikan jika push gagal

@@ -1,15 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import * as fs from 'fs';
 import * as path from 'path';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class FirebaseNotificationService {
   private readonly logger = new Logger(FirebaseNotificationService.name);
   private initialized = false;
 
-  constructor() {
+  constructor(
+    @Optional() private readonly notificationsService?: NotificationsService,
+  ) {
     this.initFirebase();
   }
 
@@ -93,7 +96,22 @@ export class FirebaseNotificationService {
     title: string;
     body: string;
     data?: Record<string, string>;
+    userId?: number;
+    notifType?: string;
+    targetUrl?: string;
   }): Promise<void> {
+    if (params.userId && this.notificationsService) {
+      await this.notificationsService
+        .create({
+          userId: params.userId,
+          type: params.notifType || 'SYSTEM',
+          title: params.title,
+          body: params.body,
+          targetUrl: params.targetUrl ?? null,
+        })
+        .catch(() => undefined);
+    }
+
     if (!this.initialized || !params.token) return;
 
     try {

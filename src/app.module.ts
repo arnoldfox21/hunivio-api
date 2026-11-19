@@ -19,6 +19,7 @@ import { OwnerPostLike } from './posts/entities/owner-post-like.entity';
 import { Region } from './locations/entities/region.entity';
 import { WalletTransaction } from './wallet/entities/wallet-transaction.entity';
 import { PayoutRequest } from './wallet/entities/payout-request.entity';
+import { Notification } from './notifications/entities/notification.entity';
 import { KostsModule } from './kosts/kosts.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { UsersModule } from './users/users.module';
@@ -28,6 +29,7 @@ import { PostsModule } from './posts/posts.module';
 import { LocationsModule } from './locations/locations.module';
 import { WalletModule } from './wallet/wallet.module';
 import { StorageModule } from './storage/storage.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -66,6 +68,7 @@ import { StorageModule } from './storage/storage.module';
               Region,
               WalletTransaction,
               PayoutRequest,
+              Notification,
             ],
             synchronize:
               process.env.DB_SYNCHRONIZE === 'true' ||
@@ -102,6 +105,7 @@ import { StorageModule } from './storage/storage.module';
               Region,
               WalletTransaction,
               PayoutRequest,
+              Notification,
             ],
             synchronize:
               process.env.DB_SYNCHRONIZE === 'true' ||
@@ -122,6 +126,7 @@ import { StorageModule } from './storage/storage.module';
     LocationsModule,
     WalletModule,
     StorageModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}

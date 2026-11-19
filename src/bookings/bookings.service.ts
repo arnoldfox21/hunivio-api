@@ -7,6 +7,7 @@ import {
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -20,6 +21,7 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { KostsService } from '../kosts/kosts.service';
 import { ChatsService } from '../chats/chats.service';
 import { ChatsGateway } from '../chats/chats.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export const BOOKING_PLATFORM_FEE_PERCENT = 1;
 export const POINT_RUPIAH_VALUE = 50; // 1 poin = Rp50
@@ -41,6 +43,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     private readonly chatsService: ChatsService,
     private readonly chatsGateway: ChatsGateway,
     private readonly dataSource: DataSource,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
   onModuleInit() {
@@ -201,6 +204,16 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       } catch {
         // Jangan gagalkan penyimpanan pengajuan jika auto-chat gagal
       }
+
+      await this.notificationsService
+        ?.create({
+          userId: kost.ownerId,
+          type: 'SURVEI',
+          title: `Pengajuan Survei Baru • ${kost.name}`,
+          body: `${dto.tenantName} mengajukan jadwal survei pada ${dto.surveyDateTime || dto.startDate}.`,
+          targetUrl: '/bookings',
+        })
+        .catch(() => undefined);
     }
 
     return this.bookingRepository.findOneOrFail({ where: { id: saved.id } });
@@ -324,7 +337,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       } else if (nextStatus === 'AKTIF') {
         notifText = `Status sewa Anda di ${kost.name} kini AKTIF. Selamat menempati properti!`;
       } else if (nextStatus === 'SELESAI') {
-        notifText = `Masa sewa Anda di ${kost.name} telah ditandai SELESAI. Terima kasih telah menggunakan Keyloka.`;
+        notifText =
+          booking.bookingType === 'SURVEI'
+            ? `Jadwal survei Anda di ${kost.name} telah ditandai SELESAI. Terima kasih telah menggunakan Keyloka.`
+            : `Masa sewa Anda di ${kost.name} telah ditandai SELESAI. Terima kasih telah menggunakan Keyloka.`;
       }
       if (notifText) {
         try {
@@ -339,6 +355,16 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         } catch {
           // Jangan gagalkan update status jika notifikasi gagal
         }
+
+        await this.notificationsService
+          ?.create({
+            userId: booking.userId,
+            type: booking.bookingType === 'SURVEI' ? 'SURVEI' : 'BOOKING',
+            title: `Status ${jenis === 'survei' ? 'Survei' : 'Booking'} • ${kost.name}`,
+            body: notifText,
+            targetUrl: '/bookings',
+          })
+          .catch(() => undefined);
       }
     }
 
