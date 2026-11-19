@@ -213,16 +213,41 @@ export class WalletService {
       take: 30,
     });
 
-    const pendingTopups = transactions
+    const nowMs = Date.now();
+    const stalePendingIds = transactions
       .filter(
         (tx) =>
-          tx.type === 'TOPUP' && tx.status === 'PENDING' && Boolean(tx.orderId),
+          tx.type === 'TOPUP' &&
+          tx.status === 'PENDING' &&
+          nowMs - new Date(tx.createdAt).getTime() > 24 * 60 * 60 * 1000,
       )
-      .slice(0, 5);
+      .map((tx) => tx.id);
 
-    if (pendingTopups.length > 0 && this.duitkuService.isConfigured()) {
+    if (stalePendingIds.length > 0) {
+      await this.walletRepo.update(
+        { id: In(stalePendingIds) },
+        { status: 'EXPIRED' },
+      );
+      transactions = transactions.map((tx) =>
+        stalePendingIds.includes(tx.id) ? { ...tx, status: 'EXPIRED' } : tx,
+      );
+    }
+
+    // Hanya sync transaksi PENDING yang baru dibuat (< 30 menit) sebagai jaring pengaman
+    // jika user redirect sebelum callback Duitku tiba.
+    const recentPendingTopups = transactions
+      .filter(
+        (tx) =>
+          tx.type === 'TOPUP' &&
+          tx.status === 'PENDING' &&
+          Boolean(tx.orderId) &&
+          nowMs - new Date(tx.createdAt).getTime() <= 30 * 60 * 1000,
+      )
+      .slice(0, 3);
+
+    if (recentPendingTopups.length > 0 && this.duitkuService.isConfigured()) {
       await Promise.allSettled(
-        pendingTopups.map((tx) => this.syncTopupStatus(userId, tx.orderId)),
+        recentPendingTopups.map((tx) => this.syncTopupStatus(userId, tx.orderId)),
       );
       const refreshedUser = await this.userRepo.findOne({
         where: { id: userId },
