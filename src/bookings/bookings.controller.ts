@@ -65,6 +65,18 @@ export class BookingsController {
     });
   }
 
+  @Post('sync-order/:orderId')
+  syncPaymentByOrder(
+    @Param('orderId') orderId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.bookingsService.syncDirectBookingByOrderId(
+      orderId,
+      req.user.userId,
+      req.user.role,
+    );
+  }
+
   @Post(':id/sync-payment')
   syncPayment(
     @Param('id', ParseIntPipe) id: number,

@@ -746,6 +746,26 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  async syncDirectBookingByOrderId(
+    paymentOrderId: string,
+    requesterId: number,
+    requesterRole?: string,
+  ): Promise<Booking> {
+    const existing = await this.bookingRepository.findOne({
+      where: { paymentOrderId },
+    });
+    if (!existing) {
+      throw new NotFoundException(
+        `Booking dengan orderId ${paymentOrderId} tidak ditemukan.`,
+      );
+    }
+    return this.syncDirectBookingPayment(
+      existing.id,
+      requesterId,
+      requesterRole,
+    );
+  }
+
   async syncDirectBookingPayment(
     bookingId: number,
     requesterId: number,
