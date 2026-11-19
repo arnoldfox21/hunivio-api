@@ -178,6 +178,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
 
     const booking = this.bookingRepository.create({
       ...dto,
+      ownerId: kost.ownerId,
       bookingType: type,
       surveyDateTime: dto.surveyDateTime || dto.startDate,
       status: 'TERKIRIM',
@@ -241,7 +242,9 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       qb.andWhere('booking.userId = :userId', { userId: query!.userId });
     }
     if (hasOwner) {
-      qb.andWhere('kost.ownerId = :ownerId', { ownerId: query!.ownerId });
+      qb.andWhere('COALESCE(booking.ownerId, kost.ownerId) = :ownerId', {
+        ownerId: query!.ownerId,
+      });
     }
 
     const defaultLimit = query?.all ? 30 : 50;
@@ -271,9 +274,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     }
     const kost = await this.kostsService.findOne(booking.kostId);
     const role = (requesterRole || '').toUpperCase();
+    const bookingOwnerId = booking.ownerId || kost.ownerId;
     if (
       requesterId &&
-      kost.ownerId !== requesterId &&
+      bookingOwnerId !== requesterId &&
       role !== 'STAFF' &&
       role !== 'ADMINISTRATOR'
     ) {
@@ -384,7 +388,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const role = (requesterRole || '').toUpperCase();
     if (requesterId && requesterId > 0) {
       const isTenant = booking.userId === requesterId;
-      const isOwner = kost.ownerId === requesterId;
+      const isOwner = (booking.ownerId || kost.ownerId) === requesterId;
       const isStaff = role === 'STAFF' || role === 'ADMINISTRATOR';
       if (!isTenant && !isOwner && !isStaff) {
         throw new ForbiddenException(
@@ -699,6 +703,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       const booking = bookingRepo.create({
         kostId: kost.id,
         userId: params.userId,
+        ownerId: kost.ownerId,
         tenantName: params.tenantName.trim(),
         tenantPhone: params.tenantPhone.trim(),
         startDate: params.startDate.trim(),

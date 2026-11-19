@@ -4,17 +4,20 @@ import {
   Injectable,
   NotFoundException,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { Kost } from './entities/kost.entity';
 import { KostReport } from './entities/kost-report.entity';
 import { Facility } from './entities/facility.entity';
 import { UserFavorite } from './entities/user-favorite.entity';
 import { User } from '../users/entities/user.entity';
+import { Booking } from '../bookings/entities/booking.entity';
 import { CreateKostDto } from './dto/create-kost.dto';
 import { UpdateKostDto } from './dto/update-kost.dto';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { toTitleCaseRegion } from '../common/region-format.util';
 import { StorageService } from '../storage/storage.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -42,6 +45,7 @@ export class KostsService implements OnModuleInit {
     private readonly walletService: WalletService,
     private readonly dataSource: DataSource,
     private readonly storageService: StorageService,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
   async onModuleInit() {
@@ -929,26 +933,96 @@ export class KostsService implements OnModuleInit {
     if (!targetOwnerId || targetOwnerId <= 0) {
       throw new BadRequestException('ID pemilik tujuan tidak valid.');
     }
-    const kost = await this.kostRepository.findOne({ where: { id } });
-    if (!kost) {
-      throw new NotFoundException(`Properti ID ${id} tidak ditemukan.`);
-    }
-    const targetOwner = await this.userRepository.findOne({
-      where: { id: targetOwnerId },
-    });
-    if (!targetOwner) {
-      throw new NotFoundException(
-        `Pengguna ID ${targetOwnerId} tidak ditemukan.`,
-      );
-    }
-    kost.ownerId = targetOwner.id;
-    kost.ownerName = targetOwner.name.trim() || kost.ownerName;
-    if (targetOwner.phone && targetOwner.phone.trim()) {
-      kost.ownerPhone = targetOwner.phone.trim();
-    }
-    const saved = await this.kostRepository.save(kost);
+
+    const { saved, prevOwnerId, targetOwner } =
+      await this.dataSource.transaction(async (manager) => {
+        const kostRepo = manager.getRepository(Kost);
+        const userRepo = manager.getRepository(User);
+        const bookingRepo = manager.getRepository(Booking);
+
+        const kost = await kostRepo.findOne({ where: { id } });
+        if (!kost) {
+          throw new NotFoundException(`Properti ID ${id} tidak ditemukan.`);
+        }
+        if (kost.ownerId === targetOwnerId) {
+          throw new BadRequestException(
+            'Properti ini sudah dimiliki oleh pengguna tersebut.',
+          );
+        }
+
+        const targetUser = await userRepo.findOne({
+          where: { id: targetOwnerId },
+        });
+        if (!targetUser) {
+          throw new NotFoundException(
+            `Pengguna ID ${targetOwnerId} tidak ditemukan.`,
+          );
+        }
+
+        const activeEscrowCount = await bookingRepo.count({
+          where: {
+            kostId: id,
+            escrowStatus: In(['HELD', 'DISPUTED']),
+          },
+        });
+        if (activeEscrowCount > 0) {
+          throw new BadRequestException(
+            'Properti masih memiliki transaksi Escrow yang sedang berjalan atau bersengketa. Selesaikan terlebih dahulu sebelum memindahkan kepemilikan.',
+          );
+        }
+
+        const oldOwnerId = kost.ownerId;
+
+        // Pertahankan riwayat booking & survei lama agar tetap tercatat di pemilik sebelumnya
+        await bookingRepo.update(
+          { kostId: id, ownerId: IsNull() },
+          { ownerId: oldOwnerId },
+        );
+
+        // Upgrade role ke PEMILIK_KOST jika sebelumnya masih PENYEWA
+        if ((targetUser.role || '').toUpperCase() === 'PENYEWA') {
+          targetUser.role = 'PEMILIK_KOST';
+          await userRepo.save(targetUser);
+        }
+
+        kost.ownerId = targetUser.id;
+        kost.ownerName = targetUser.name.trim() || kost.ownerName;
+        if (targetUser.phone && targetUser.phone.trim()) {
+          kost.ownerPhone = targetUser.phone.trim();
+        }
+        const updatedKost = await kostRepo.save(kost);
+        return {
+          saved: updatedKost,
+          prevOwnerId: oldOwnerId,
+          targetOwner: targetUser,
+        };
+      });
+
     this._filtersCache.clear();
     await this.syncOwnerNames([saved]);
+
+    await this.notificationsService
+      ?.create({
+        userId: targetOwner.id,
+        type: 'PROPERTY',
+        title: 'Kepemilikan Properti Diterima',
+        body: `Anda kini menjadi pemilik properti "${saved.name}". Kelola properti Anda melalui Dashboard.`,
+        targetUrl: '/dashboard',
+      })
+      .catch(() => undefined);
+
+    if (prevOwnerId && prevOwnerId !== targetOwner.id) {
+      await this.notificationsService
+        ?.create({
+          userId: prevOwnerId,
+          type: 'PROPERTY',
+          title: 'Kepemilikan Properti Dipindahkan',
+          body: `Kepemilikan properti "${saved.name}" telah dipindahkan ke ${targetOwner.name}.`,
+          targetUrl: '/dashboard',
+        })
+        .catch(() => undefined);
+    }
+
     return saved;
   }
 

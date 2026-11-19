@@ -35,6 +35,10 @@ export class Booking {
   @Column({ type: 'int', nullable: true })
   userId: number | null;
 
+  @Index()
+  @Column({ type: 'int', nullable: true })
+  ownerId: number | null;
+
   @Column({ default: 'SURVEI' })
   bookingType: string;
 
