@@ -838,7 +838,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     }
     if (existing.paymentStatus === 'PAID') return existing;
 
-    const mapped = this.duitkuService.mapResultCode(resultCode);
+    const mapped = this.duitkuService.mapCallbackResultCode(resultCode);
     const isPaid = mapped === 'PAID';
     const isExpired = mapped === 'EXPIRED';
     const isFailed = mapped === 'FAILED';

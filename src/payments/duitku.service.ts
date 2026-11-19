@@ -76,6 +76,14 @@ export class DuitkuService {
     return 'PENDING';
   }
 
+  mapCallbackResultCode(code?: string | null): DuitkuMappedStatus {
+    const normalized = String(code || '').trim();
+    if (normalized === '00') return 'PAID';
+    if (normalized === '01') return 'FAILED';
+    if (normalized === '02') return 'EXPIRED';
+    return 'PENDING';
+  }
+
   async createInvoice(
     params: CreateDuitkuInvoiceParams,
   ): Promise<CreateDuitkuInvoiceResult> {

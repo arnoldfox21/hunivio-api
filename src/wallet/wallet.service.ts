@@ -333,6 +333,7 @@ export class WalletService {
     const saved = await this.walletRepo.save(tx);
 
     return {
+      orderId: saved.orderId,
       transaction: saved,
       paymentReference: invoice.reference,
       paymentUrl: invoice.paymentUrl,
@@ -475,7 +476,7 @@ export class WalletService {
       };
     }
 
-    const mapped = this.duitkuService.mapResultCode(resultCode);
+    const mapped = this.duitkuService.mapCallbackResultCode(resultCode);
     if (mapped === 'PAID') {
       const existingTx = await this.walletRepo.findOne({ where: { orderId } });
       const paidAmt = Math.round(Number(amount));
