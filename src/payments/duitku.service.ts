@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 
@@ -37,6 +38,8 @@ export interface DuitkuStatusResult {
 
 @Injectable()
 export class DuitkuService {
+  private readonly logger = new Logger(DuitkuService.name);
+
   private get config() {
     const isProd = process.env.DUITKU_IS_PRODUCTION === 'true';
     const merchantCode = (process.env.DUITKU_MERCHANT_CODE || '').trim();
@@ -140,6 +143,9 @@ export class DuitkuService {
     };
 
     if (!response.ok || !data.reference || !data.paymentUrl) {
+      this.logger.error(
+        `createInvoice failed [${response.status}] (${popBaseUrl}, orderId=${params.merchantOrderId}): ${JSON.stringify(data)}`,
+      );
       const msg =
         data.statusMessage ||
         data.Message ||
