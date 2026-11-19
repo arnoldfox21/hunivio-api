@@ -22,6 +22,7 @@ import { KostsService } from '../kosts/kosts.service';
 import { ChatsService } from '../chats/chats.service';
 import { ChatsGateway } from '../chats/chats.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
+import { DuitkuService } from '../payments/duitku.service';
 
 export const BOOKING_PLATFORM_FEE_PERCENT = 1;
 export const POINT_RUPIAH_VALUE = 50; // 1 poin = Rp50
@@ -43,6 +44,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     private readonly chatsService: ChatsService,
     private readonly chatsGateway: ChatsGateway,
     private readonly dataSource: DataSource,
+    private readonly duitkuService: DuitkuService,
     @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
@@ -449,29 +451,6 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return cancelled;
   }
 
-  private get midtransConfig() {
-    const isProd = process.env.MIDTRANS_IS_PRODUCTION === 'true';
-    const serverKey = (process.env.MIDTRANS_SERVER_KEY || '').trim();
-    if (!serverKey) {
-      throw new InternalServerErrorException(
-        'Konfigurasi Midtrans Server Key belum tersedia.',
-      );
-    }
-    return {
-      serverKey,
-      snapUrl: isProd
-        ? 'https://app.midtrans.com/snap/v1/transactions'
-        : 'https://app.sandbox.midtrans.com/snap/v1/transactions',
-      statusBaseUrl: isProd
-        ? 'https://api.midtrans.com/v2'
-        : 'https://api.sandbox.midtrans.com/v2',
-    };
-  }
-
-  private _basicAuthHeader(serverKey: string): string {
-    return `Basic ${Buffer.from(`${serverKey}:`).toString('base64')}`;
-  }
-
   async createDirectBooking(params: {
     userId: number;
     kostId: number;
@@ -629,7 +608,6 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       },
     ];
 
-    const { serverKey, snapUrl } = this.midtransConfig;
     const webBaseUrl = (
       process.env.WEB_URL ||
       process.env.FRONTEND_URL ||
@@ -637,48 +615,31 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     )
       .trim()
       .replace(/\/+$/, '');
-    const snapPayload = {
-      transaction_details: {
-        order_id: paymentOrderId,
-        gross_amount: totalAmount,
-      },
-      item_details: itemDetails,
-      customer_details: {
-        first_name: params.tenantName || user?.name || 'Penyewa Keyloka',
-        email: user?.email || undefined,
-        phone: params.tenantPhone || user?.phone || undefined,
-      },
-      callbacks: {
-        finish: `${webBaseUrl}/payment/finish`,
-      },
-    };
+    const apiBaseUrl = (
+      process.env.API_PUBLIC_URL ||
+      'https://api.keyloka.com'
+    )
+      .trim()
+      .replace(/\/+$/, '');
+    const callbackUrl = (
+      process.env.DUITKU_CALLBACK_URL ||
+      `${apiBaseUrl}/api/wallet/duitku-callback`
+    ).trim();
 
-    const response = await fetch(snapUrl, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: this._basicAuthHeader(serverKey),
-      },
-      body: JSON.stringify(snapPayload),
+    const invoice = await this.duitkuService.createInvoice({
+      merchantOrderId: paymentOrderId,
+      amount: totalAmount,
+      productDetails: `${kost.name} (${durationCount} ${unitLabel} - ${schemeLabel})`.slice(
+        0,
+        200,
+      ),
+      customerName: params.tenantName || user?.name || 'Penyewa Keyloka',
+      customerEmail: user?.email,
+      customerPhone: params.tenantPhone || user?.phone,
+      callbackUrl,
+      returnUrl: `${webBaseUrl}/payment/finish`,
+      itemDetails,
     });
-
-    const data = (await response.json()) as {
-      token?: string;
-      redirect_url?: string;
-      error_messages?: string[];
-      error?: string;
-      status_message?: string;
-    };
-
-    if (!response.ok || !data.token || !data.redirect_url) {
-      const msg =
-        data.error_messages?.join(', ') ||
-        data.status_message ||
-        data.error ||
-        'Gagal membuat transaksi pembayaran Midtrans.';
-      throw new BadRequestException(`Midtrans: ${msg}`);
-    }
 
     return this.dataSource.transaction(async (manager) => {
       const bookingRepo = manager.getRepository(Booking);
@@ -721,8 +682,8 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         paidAmount,
         remainingAmount,
         paymentOrderId,
-        snapToken: data.token,
-        paymentUrl: data.redirect_url,
+        paymentReference: invoice.reference,
+        paymentUrl: invoice.paymentUrl,
         paymentStatus: 'UNPAID',
         escrowStatus: 'NONE',
         pointsUsed,
@@ -771,47 +732,25 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Order pembayaran belum tersedia.');
     }
 
-    const { serverKey, statusBaseUrl } = this.midtransConfig;
-    const response = await fetch(
-      `${statusBaseUrl}/${encodeURIComponent(existing.paymentOrderId)}/status`,
-      {
-        headers: {
-          Accept: 'application/json',
-          Authorization: this._basicAuthHeader(serverKey),
-        },
-      },
+    const statusResult = await this.duitkuService.checkTransactionStatus(
+      existing.paymentOrderId,
     );
-    const data = (await response.json()) as {
-      status_code?: string;
-      transaction_status?: string;
-      fraud_status?: string;
-      gross_amount?: string;
-      status_message?: string;
-    };
 
-    if (response.status === 404 || data.status_code === '404') {
+    if (statusResult.notFound) {
       return existing;
     }
-    if (!response.ok) {
-      throw new BadRequestException(
-        data.status_message || 'Gagal memeriksa status pembayaran Midtrans.',
-      );
-    }
 
-    const txStatus = (data.transaction_status || '').toLowerCase();
-    const fraud = (data.fraud_status || '').toLowerCase();
-    const isPaid =
-      txStatus === 'settlement' ||
-      (txStatus === 'capture' && fraud !== 'challenge');
-    const isExpired = txStatus === 'expire';
-    const isFailed =
-      txStatus === 'cancel' || txStatus === 'deny' || txStatus === 'failure';
+    const isPaid = statusResult.mappedStatus === 'PAID';
+    const isExpired = statusResult.mappedStatus === 'EXPIRED';
+    const isFailed = statusResult.mappedStatus === 'FAILED';
 
     if (isPaid) {
-      const paidAmount = data.gross_amount ? Math.round(Number(data.gross_amount)) : null;
-      if (paidAmount !== null && Number.isFinite(paidAmount) && paidAmount !== Number(existing.totalAmount)) {
+      if (
+        statusResult.amount !== undefined &&
+        statusResult.amount !== Number(existing.totalAmount)
+      ) {
         throw new BadRequestException(
-          'Nominal pembayaran Midtrans tidak sesuai dengan tagihan booking.',
+          'Nominal pembayaran Duitku tidak sesuai dengan tagihan booking.',
         );
       }
       const updated = await this.dataSource.transaction(async (manager) => {
@@ -884,10 +823,9 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return existing;
   }
 
-  async applyMidtransWebhookPayment(
+  async applyDuitkuCallbackPayment(
     paymentOrderId: string,
-    transactionStatus: string,
-    fraudStatus: string,
+    resultCode: string,
     grossAmount?: string,
   ): Promise<Booking> {
     const existing = await this.bookingRepository.findOne({
@@ -900,20 +838,16 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     }
     if (existing.paymentStatus === 'PAID') return existing;
 
-    const txStatus = transactionStatus.toLowerCase();
-    const fraud = fraudStatus.toLowerCase();
-    const isPaid =
-      txStatus === 'settlement' ||
-      (txStatus === 'capture' && fraud !== 'challenge');
-    const isExpired = txStatus === 'expire';
-    const isFailed =
-      txStatus === 'cancel' || txStatus === 'deny' || txStatus === 'failure';
+    const mapped = this.duitkuService.mapResultCode(resultCode);
+    const isPaid = mapped === 'PAID';
+    const isExpired = mapped === 'EXPIRED';
+    const isFailed = mapped === 'FAILED';
 
     if (isPaid) {
       const paidAmount = grossAmount ? Math.round(Number(grossAmount)) : null;
       if (paidAmount !== null && Number.isFinite(paidAmount) && paidAmount !== Number(existing.totalAmount)) {
         throw new BadRequestException(
-          'Nominal webhook Midtrans tidak sesuai dengan tagihan booking.',
+          'Nominal callback Duitku tidak sesuai dengan tagihan booking.',
         );
       }
       const updated = await this.dataSource.transaction(async (manager) => {

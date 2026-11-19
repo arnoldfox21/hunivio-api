@@ -63,10 +63,10 @@ export class WalletController {
     return this.walletService.syncTopupStatus(req.user.userId, orderId);
   }
 
-  @Post('midtrans-webhook')
+  @Post('duitku-callback')
   @HttpCode(200)
-  handleMidtransWebhook(@Body() payload: Record<string, unknown>) {
-    return this.walletService.handleMidtransWebhook(payload);
+  handleDuitkuCallback(@Body() payload: Record<string, unknown>) {
+    return this.walletService.handleDuitkuCallback(payload);
   }
 
   @UseGuards(JwtAuthGuard)

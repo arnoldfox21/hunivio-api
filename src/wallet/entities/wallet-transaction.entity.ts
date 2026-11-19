@@ -28,8 +28,8 @@ export class WalletTransaction {
   @Column({ type: 'varchar', length: 24, default: 'PENDING' })
   status: string;
 
-  @Column({ type: 'varchar', nullable: true })
-  snapToken: string | null;
+  @Column({ name: 'snapToken', type: 'varchar', nullable: true })
+  paymentReference: string | null;
 
   @Column({ type: 'text', nullable: true })
   paymentUrl: string | null;
