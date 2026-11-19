@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
-import * as sharp from 'sharp';
+const sharp = require('sharp') as typeof import('sharp').default;
 import { StorageService } from '../storage/storage.service';
 import { Article } from './entities/article.entity';
 import { ArticleCategory } from './entities/article-category.entity';
@@ -440,10 +440,15 @@ export class ArticlesService {
       .webp({ quality: 82 })
       .toBuffer();
 
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const rand = Math.random().toString(36).slice(2, 8);
+    const key = `articles/${year}/${month}/article_${Date.now()}_${rand}.webp`;
+
     const uploaded = await this.storageService.uploadBuffer(
       optimized,
-      'articles',
-      'webp',
+      key,
       'image/webp',
     );
     return {
