@@ -70,6 +70,11 @@ import { StorageModule } from './storage/storage.module';
             synchronize:
               process.env.DB_SYNCHRONIZE === 'true' ||
               process.env.NODE_ENV !== 'production',
+            extra: {
+              max: Math.max(5, Number(process.env.DB_POOL_MAX) || 20),
+              idleTimeoutMillis: 30000,
+              connectionTimeoutMillis: 10000,
+            },
           }
         : {
             type: 'postgres',
@@ -101,6 +106,11 @@ import { StorageModule } from './storage/storage.module';
             synchronize:
               process.env.DB_SYNCHRONIZE === 'true' ||
               process.env.NODE_ENV !== 'production',
+            extra: {
+              max: Math.max(5, Number(process.env.DB_POOL_MAX) || 20),
+              idleTimeoutMillis: 30000,
+              connectionTimeoutMillis: 10000,
+            },
           },
     ),
     KostsModule,

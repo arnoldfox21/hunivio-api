@@ -99,10 +99,18 @@ async function bootstrap() {
       'Terlalu banyak permintaan. Coba lagi sebentar.',
     ),
   );
-  app.use(express.json({ limit: '15mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+  app.use('/api/kosts/upload-image', express.json({ limit: '15mb' }));
+  app.use('/api/kosts', express.json({ limit: '15mb' }));
+  app.use('/api/posts', express.json({ limit: '15mb' }));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
   const corsOrigin = process.env.CORS_ORIGIN?.trim();
+  if (process.env.NODE_ENV === 'production' && !corsOrigin) {
+    console.warn(
+      '⚠️ CORS_ORIGIN belum diset di production; CORS fallback ke wildcard (*).',
+    );
+  }
   app.enableCors({
     origin: corsOrigin ? corsOrigin.split(',').map((o) => o.trim()) : '*',
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',

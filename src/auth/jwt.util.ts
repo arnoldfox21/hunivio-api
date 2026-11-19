@@ -16,12 +16,17 @@ function getJwtSecret(): string {
 }
 
 export function signAuthToken(payload: AuthUserPayload): string {
-  return jwt.sign(payload, getJwtSecret(), { expiresIn: '30d' });
+  return jwt.sign(payload, getJwtSecret(), {
+    algorithm: 'HS256',
+    expiresIn: '30d',
+  });
 }
 
 export function verifyAuthToken(token: string): AuthUserPayload | null {
   try {
-    const decoded = jwt.verify(token, getJwtSecret()) as jwt.JwtPayload;
+    const decoded = jwt.verify(token, getJwtSecret(), {
+      algorithms: ['HS256'],
+    }) as jwt.JwtPayload;
     const userId = Number(decoded.userId);
     if (!Number.isFinite(userId) || userId <= 0) return null;
     return {
