@@ -460,7 +460,13 @@ export class UsersService implements OnModuleInit {
 
     const user = await this.findOne(id);
     const normalizedRole = dto.role.trim().toUpperCase();
-    const allowedRoles = ['PENYEWA', 'PEMILIK_KOST', 'STAFF', 'ADMINISTRATOR'];
+    const allowedRoles = [
+      'PENYEWA',
+      'PEMILIK_KOST',
+      'PENULIS',
+      'STAFF',
+      'ADMINISTRATOR',
+    ];
     if (!allowedRoles.includes(normalizedRole)) {
       throw new BadRequestException('Peran pengguna tidak valid.');
     }

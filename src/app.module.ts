@@ -20,6 +20,8 @@ import { Region } from './locations/entities/region.entity';
 import { WalletTransaction } from './wallet/entities/wallet-transaction.entity';
 import { PayoutRequest } from './wallet/entities/payout-request.entity';
 import { Notification } from './notifications/entities/notification.entity';
+import { Article } from './articles/entities/article.entity';
+import { ArticleCategory } from './articles/entities/article-category.entity';
 import { KostsModule } from './kosts/kosts.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { UsersModule } from './users/users.module';
@@ -30,6 +32,7 @@ import { LocationsModule } from './locations/locations.module';
 import { WalletModule } from './wallet/wallet.module';
 import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ArticlesModule } from './articles/articles.module';
 
 @Module({
   imports: [
@@ -69,6 +72,8 @@ import { NotificationsModule } from './notifications/notifications.module';
               WalletTransaction,
               PayoutRequest,
               Notification,
+              Article,
+              ArticleCategory,
             ],
             synchronize:
               process.env.DB_SYNCHRONIZE === 'true' ||
@@ -106,6 +111,8 @@ import { NotificationsModule } from './notifications/notifications.module';
               WalletTransaction,
               PayoutRequest,
               Notification,
+              Article,
+              ArticleCategory,
             ],
             synchronize:
               process.env.DB_SYNCHRONIZE === 'true' ||
@@ -127,6 +134,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     WalletModule,
     StorageModule,
     NotificationsModule,
+    ArticlesModule,
   ],
 })
 export class AppModule {}
