@@ -33,7 +33,6 @@ import { WalletModule } from './wallet/wallet.module';
 import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ArticlesModule } from './articles/articles.module';
-import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -136,7 +135,6 @@ import { PaymentsModule } from './payments/payments.module';
     StorageModule,
     NotificationsModule,
     ArticlesModule,
-    PaymentsModule,
   ],
 })
 export class AppModule {}

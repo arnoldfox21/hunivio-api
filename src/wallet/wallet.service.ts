@@ -17,7 +17,6 @@ import { User } from '../users/entities/user.entity';
 import { Kost } from '../kosts/entities/kost.entity';
 import { CreateTopupDto } from './dto/create-topup.dto';
 import { BookingsService } from '../bookings/bookings.service';
-import { DuitkuService, DuitkuMappedStatus } from '../payments/duitku.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
 export const FREE_PROPERTY_QUOTA = 2;
@@ -55,9 +54,34 @@ export class WalletService {
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => BookingsService))
     private readonly bookingsService: BookingsService,
-    private readonly duitkuService: DuitkuService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  private get midtransConfig() {
+    const isProd = process.env.MIDTRANS_IS_PRODUCTION === 'true';
+    const serverKey = (process.env.MIDTRANS_SERVER_KEY || '').trim();
+    const clientKey = (process.env.MIDTRANS_CLIENT_KEY || '').trim();
+    if (!serverKey) {
+      throw new InternalServerErrorException(
+        'Konfigurasi Midtrans Server Key belum tersedia.',
+      );
+    }
+    return {
+      isProd,
+      serverKey,
+      clientKey,
+      snapUrl: isProd
+        ? 'https://app.midtrans.com/snap/v1/transactions'
+        : 'https://app.sandbox.midtrans.com/snap/v1/transactions',
+      statusBaseUrl: isProd
+        ? 'https://api.midtrans.com/v2'
+        : 'https://api.sandbox.midtrans.com/v2',
+    };
+  }
+
+  private _basicAuthHeader(serverKey: string): string {
+    return `Basic ${Buffer.from(`${serverKey}:`).toString('base64')}`;
+  }
 
   private _assertEligibleUser(user: User): void {
     const role = (user.role || '').trim().toUpperCase();
@@ -112,7 +136,7 @@ export class WalletService {
         amount: params.amount,
         type: params.type,
         status: 'PAID',
-        paymentReference: null,
+        snapToken: null,
         paymentUrl: null,
         paymentMethod: 'CREDIT',
         description: params.description,
@@ -236,7 +260,7 @@ export class WalletService {
     }
 
     // Hanya sync transaksi PENDING yang baru dibuat (< 30 menit) sebagai jaring pengaman
-    // jika user redirect sebelum callback Duitku tiba.
+    // jika user redirect sebelum webhook Midtrans tiba.
     const recentPendingTopups = transactions
       .filter(
         (tx) =>
@@ -247,7 +271,7 @@ export class WalletService {
       )
       .slice(0, 3);
 
-    if (recentPendingTopups.length > 0 && this.duitkuService.isConfigured()) {
+    if (recentPendingTopups.length > 0 && (process.env.MIDTRANS_SERVER_KEY || '').trim()) {
       await Promise.allSettled(
         recentPendingTopups.map((tx) => this.syncTopupStatus(userId, tx.orderId)),
       );
@@ -281,6 +305,7 @@ export class WalletService {
     this._assertEligibleUser(user);
 
     const amount = Math.round(Number(dto.amount));
+    const { serverKey, clientKey, snapUrl } = this.midtransConfig;
     const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
     const orderId = `HNV-TOPUP-${userId}-${Date.now()}-${randSuffix}`;
 
@@ -291,34 +316,55 @@ export class WalletService {
     )
       .trim()
       .replace(/\/+$/, '');
-    const apiBaseUrl = (
-      process.env.API_PUBLIC_URL ||
-      'https://api.keyloka.com'
-    )
-      .trim()
-      .replace(/\/+$/, '');
-    const callbackUrl = (
-      process.env.DUITKU_CALLBACK_URL ||
-      `${apiBaseUrl}/api/wallet/duitku-callback`
-    ).trim();
-
-    const invoice = await this.duitkuService.createInvoice({
-      merchantOrderId: orderId,
-      amount,
-      productDetails: `Top Up Saldo Kredit Keyloka (${amount.toLocaleString('id-ID')})`,
-      customerName: user.name || 'Pemilik Kost',
-      customerEmail: user.email,
-      customerPhone: user.phone,
-      callbackUrl,
-      returnUrl: `${webBaseUrl}/payment/finish`,
-      itemDetails: [
+    const snapPayload = {
+      transaction_details: {
+        order_id: orderId,
+        gross_amount: amount,
+      },
+      item_details: [
         {
-          name: `Top Up Saldo Kredit Keyloka (${amount.toLocaleString('id-ID')})`,
+          id: 'KEYLOKA-CREDIT',
           price: amount,
           quantity: 1,
+          name: `Top Up Saldo Kredit Keyloka (${amount.toLocaleString('id-ID')})`,
         },
       ],
+      customer_details: {
+        first_name: user.name || 'Pemilik Kost',
+        email: user.email || undefined,
+        phone: user.phone || undefined,
+      },
+      callbacks: {
+        finish: `${webBaseUrl}/payment/finish`,
+      },
+    };
+
+    const response = await fetch(snapUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: this._basicAuthHeader(serverKey),
+      },
+      body: JSON.stringify(snapPayload),
     });
+
+    const data = (await response.json()) as {
+      token?: string;
+      redirect_url?: string;
+      error_messages?: string[];
+      error?: string;
+      status_message?: string;
+    };
+
+    if (!response.ok || !data.token || !data.redirect_url) {
+      const msg =
+        data.error_messages?.join(', ') ||
+        data.status_message ||
+        data.error ||
+        'Gagal membuat transaksi pembayaran Midtrans.';
+      throw new BadRequestException(`Midtrans: ${msg}`);
+    }
 
     const tx = this.walletRepo.create({
       userId,
@@ -326,8 +372,8 @@ export class WalletService {
       amount,
       type: 'TOPUP',
       status: 'PENDING',
-      paymentReference: invoice.reference,
-      paymentUrl: invoice.paymentUrl,
+      snapToken: data.token,
+      paymentUrl: data.redirect_url,
       paymentMethod: '',
       description: 'Top-up saldo kredit Keyloka',
     });
@@ -337,17 +383,36 @@ export class WalletService {
     return {
       orderId: saved.orderId,
       transaction: saved,
-      paymentReference: invoice.reference,
-      paymentUrl: invoice.paymentUrl,
+      snapToken: data.token,
+      paymentUrl: data.redirect_url,
+      clientKey,
     };
   }
 
-  private async _applyPaymentStatusUpdate(
+  private _mapMidtransStatus(
+    transactionStatus?: string,
+    fraudStatus?: string,
+  ): 'PAID' | 'PENDING' | 'EXPIRED' | 'FAILED' {
+    const status = (transactionStatus || '').toLowerCase();
+    const fraud = (fraudStatus || '').toLowerCase();
+    if (status === 'settlement') return 'PAID';
+    if (status === 'capture') {
+      return fraud === 'challenge' ? 'PENDING' : 'PAID';
+    }
+    if (status === 'pending') return 'PENDING';
+    if (status === 'expire') return 'EXPIRED';
+    if (status === 'cancel' || status === 'deny' || status === 'failure') {
+      return 'FAILED';
+    }
+    return 'PENDING';
+  }
+
+  private async _applyMidtransStatusUpdate(
     orderId: string,
-    mappedStatus: DuitkuMappedStatus,
+    mappedStatus: 'PAID' | 'PENDING' | 'EXPIRED' | 'FAILED',
     paymentType?: string,
   ): Promise<{ transaction: WalletTransaction; creditBalance: number }> {
-    let statusChangedTo: DuitkuMappedStatus | null = null;
+    let statusChangedTo: 'PAID' | 'PENDING' | 'EXPIRED' | 'FAILED' | null = null;
 
     const result = await this.dataSource.transaction(async (manager) => {
       const txRepo = manager.getRepository(WalletTransaction);
@@ -449,12 +514,30 @@ export class WalletService {
       };
     }
 
-    const statusResult = await this.duitkuService.checkTransactionStatus(orderId);
+    const { serverKey, statusBaseUrl } = this.midtransConfig;
+    const response = await fetch(
+      `${statusBaseUrl}/${encodeURIComponent(orderId)}/status`,
+      {
+        headers: {
+          Accept: 'application/json',
+          Authorization: this._basicAuthHeader(serverKey),
+        },
+      },
+    );
 
-    if (statusResult.notFound) {
+    const data = (await response.json()) as {
+      status_code?: string;
+      transaction_status?: string;
+      fraud_status?: string;
+      gross_amount?: string;
+      payment_type?: string;
+      status_message?: string;
+    };
+
+    if (response.status === 404 || data.status_code === '404') {
       const ageMs = Date.now() - new Date(existing.createdAt).getTime();
       if (ageMs > 24 * 60 * 60 * 1000) {
-        return this._applyPaymentStatusUpdate(orderId, 'EXPIRED');
+        return this._applyMidtransStatusUpdate(orderId, 'EXPIRED');
       }
       const user = await this.userRepo.findOne({ where: { id: userId } });
       return {
@@ -463,51 +546,58 @@ export class WalletService {
       };
     }
 
-    if (
-      statusResult.mappedStatus === 'PAID' &&
-      statusResult.amount !== undefined &&
-      statusResult.amount !== Number(existing.amount)
-    ) {
+    if (!response.ok) {
       throw new BadRequestException(
-        'Nominal pembayaran Duitku tidak sesuai dengan transaksi top-up.',
+        data.status_message || 'Gagal memeriksa status transaksi Midtrans.',
       );
     }
-    return this._applyPaymentStatusUpdate(
-      orderId,
-      statusResult.mappedStatus,
+
+    const mapped = this._mapMidtransStatus(
+      data.transaction_status,
+      data.fraud_status,
     );
+    if (mapped === 'PAID' && data.gross_amount) {
+      const paidAmt = Math.round(Number(data.gross_amount));
+      if (Number.isFinite(paidAmt) && paidAmt !== Number(existing.amount)) {
+        throw new BadRequestException(
+          'Nominal pembayaran Midtrans tidak sesuai dengan transaksi top-up.',
+        );
+      }
+    }
+    return this._applyMidtransStatusUpdate(orderId, mapped, data.payment_type);
   }
 
-  async handleDuitkuCallback(payload: Record<string, unknown>) {
-    const merchantCode = String(payload.merchantCode || '');
-    const amount = String(payload.amount || '');
-    const orderId = String(payload.merchantOrderId || '');
-    const resultCode = String(payload.resultCode || '');
-    const signature = String(payload.signature || '');
-    const paymentMethod = payload.paymentCode
-      ? String(payload.paymentCode)
-      : undefined;
+  async handleMidtransWebhook(payload: Record<string, unknown>) {
+    const orderId = String(payload.order_id || '');
+    const statusCode = String(payload.status_code || '');
+    const grossAmount = String(payload.gross_amount || '');
+    const signatureKey = String(payload.signature_key || '');
 
-    if (!merchantCode || !amount || !orderId || !signature) {
-      throw new BadRequestException('Payload callback Duitku tidak lengkap.');
+    if (!orderId || !statusCode || !grossAmount || !signatureKey) {
+      throw new BadRequestException('Payload webhook Midtrans tidak lengkap.');
     }
 
-    const isValid = this.duitkuService.verifyCallbackSignature({
-      merchantCode,
-      amount,
-      merchantOrderId: orderId,
-      signature,
-    });
-    if (!isValid) {
-      throw new UnauthorizedException('Signature callback Duitku tidak valid.');
+    const { serverKey } = this.midtransConfig;
+    const expectedSignature = crypto
+      .createHash('sha512')
+      .update(`${orderId}${statusCode}${grossAmount}${serverKey}`)
+      .digest('hex');
+
+    if (expectedSignature !== signatureKey) {
+      throw new UnauthorizedException('Signature webhook Midtrans tidak valid.');
+    }
+
+    if (orderId.startsWith('payment_notif_test_')) {
+      return { ok: true, test: true, orderId };
     }
 
     if (orderId.startsWith('HNV-BOOK-')) {
       const updatedBooking =
-        await this.bookingsService.applyDuitkuCallbackPayment(
+        await this.bookingsService.applyMidtransWebhookPayment(
           orderId,
-          resultCode,
-          amount,
+          String(payload.transaction_status || ''),
+          String(payload.fraud_status || ''),
+          grossAmount,
         );
       return {
         ok: true,
@@ -517,25 +607,31 @@ export class WalletService {
       };
     }
 
-    const mapped = this.duitkuService.mapCallbackResultCode(resultCode);
+    const mapped = this._mapMidtransStatus(
+      String(payload.transaction_status || ''),
+      String(payload.fraud_status || ''),
+    );
     if (mapped === 'PAID') {
       const existingTx = await this.walletRepo.findOne({ where: { orderId } });
-      const paidAmt = Math.round(Number(amount));
+      const paidAmt = Math.round(Number(grossAmount));
       if (
         existingTx &&
         Number.isFinite(paidAmt) &&
         paidAmt !== Number(existingTx.amount)
       ) {
         throw new BadRequestException(
-          'Nominal callback Duitku tidak sesuai dengan transaksi top-up.',
+          'Nominal webhook Midtrans tidak sesuai dengan transaksi top-up.',
         );
       }
     }
+    const paymentType = payload.payment_type
+      ? String(payload.payment_type)
+      : undefined;
 
-    const result = await this._applyPaymentStatusUpdate(
+    const result = await this._applyMidtransStatusUpdate(
       orderId,
       mapped,
-      paymentMethod,
+      paymentType,
     );
     return {
       ok: true,

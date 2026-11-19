@@ -83,8 +83,8 @@ export class Booking {
   @Column({ type: 'varchar', nullable: true })
   paymentOrderId: string | null;
 
-  @Column({ name: 'snapToken', type: 'varchar', nullable: true })
-  paymentReference: string | null;
+  @Column({ type: 'varchar', nullable: true })
+  snapToken: string | null;
 
   @Column({ type: 'text', nullable: true })
   paymentUrl: string | null;
