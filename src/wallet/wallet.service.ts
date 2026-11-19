@@ -231,11 +231,37 @@ export class WalletService {
     }
     this._assertEligibleUser(user);
 
-    const transactions = await this.walletRepo.find({
+    let transactions = await this.walletRepo.find({
       where: { userId },
       order: { createdAt: 'DESC' },
       take: 30,
     });
+
+    const pendingTopups = transactions
+      .filter(
+        (tx) =>
+          tx.type === 'TOPUP' && tx.status === 'PENDING' && Boolean(tx.orderId),
+      )
+      .slice(0, 5);
+
+    if (pendingTopups.length > 0 && (process.env.MIDTRANS_SERVER_KEY || '').trim()) {
+      await Promise.allSettled(
+        pendingTopups.map((tx) => this.syncTopupStatus(userId, tx.orderId)),
+      );
+      const refreshedUser = await this.userRepo.findOne({
+        where: { id: userId },
+      });
+      transactions = await this.walletRepo.find({
+        where: { userId },
+        order: { createdAt: 'DESC' },
+        take: 30,
+      });
+      return {
+        creditBalance: Number(refreshedUser?.creditBalance ?? user.creditBalance ?? 0),
+        payoutBalance: Number(refreshedUser?.payoutBalance ?? user.payoutBalance ?? 0),
+        transactions,
+      };
+    }
 
     return {
       creditBalance: Number(user.creditBalance ?? 0),
@@ -442,7 +468,12 @@ export class WalletService {
     };
 
     if (response.status === 404 || data.status_code === '404') {
-      // Transaksi belum dipilih metode bayarnya di Snap sehingga belum tercatat di Core Status API
+      // Transaksi belum dipilih metode bayarnya di Snap sehingga belum tercatat di Core Status API.
+      // Token Snap berlaku 24 jam; jika sudah lewat 24 jam, tandai EXPIRED agar tidak menggantung PENDING.
+      const ageMs = Date.now() - new Date(existing.createdAt).getTime();
+      if (ageMs > 24 * 60 * 60 * 1000) {
+        return this._applyMidtransStatusUpdate(orderId, 'EXPIRED');
+      }
       const user = await this.userRepo.findOne({ where: { id: userId } });
       return {
         transaction: existing,
