@@ -5,6 +5,7 @@ import { KostGroupMessage } from './entities/kost-group-message.entity';
 import { KostGroupSetting } from './entities/kost-group-setting.entity';
 import { Kost } from '../kosts/entities/kost.entity';
 import { User } from '../users/entities/user.entity';
+import { Booking } from '../bookings/entities/booking.entity';
 import { ChatsService } from './chats.service';
 import { ChatsController } from './chats.controller';
 import { ChatsGateway } from './chats.gateway';
@@ -19,6 +20,7 @@ import { FirebaseNotificationService } from './firebase-notification.service';
       KostGroupSetting,
       Kost,
       User,
+      Booking,
     ]),
     UsersModule,
   ],

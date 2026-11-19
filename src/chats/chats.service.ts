@@ -11,6 +11,17 @@ import { KostGroupMessage } from './entities/kost-group-message.entity';
 import { KostGroupSetting } from './entities/kost-group-setting.entity';
 import { Kost } from '../kosts/entities/kost.entity';
 import { User } from '../users/entities/user.entity';
+import { Booking } from '../bookings/entities/booking.entity';
+
+export interface ChatBookingSummary {
+  id: number;
+  status: string;
+  bookingType: string;
+  startDate: string;
+  surveyDateTime?: string | null;
+  tenantName: string;
+  ownerId: number;
+}
 
 @Injectable()
 export class ChatsService {
@@ -25,13 +36,65 @@ export class ChatsService {
     private readonly kostRepository: Repository<Kost>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Booking)
+    private readonly bookingRepository: Repository<Booking>,
   ) {}
 
-  async findMessages(kostId: number, userId?: number): Promise<ChatMessage[]> {
+  private isKostCategory(propertyCategory?: string | null): boolean {
+    return (propertyCategory || 'KOST').trim().toUpperCase() === 'KOST';
+  }
+
+  private async attachBookingSummaries(
+    messages: ChatMessage[],
+  ): Promise<Array<ChatMessage & { booking?: ChatBookingSummary | null }>> {
+    const bookingIds = Array.from(
+      new Set(
+        messages
+          .map((m) => m.bookingId)
+          .filter((id): id is number => typeof id === 'number' && id > 0),
+      ),
+    );
+    if (bookingIds.length === 0) {
+      return messages;
+    }
+
+    const bookings = await this.bookingRepository.find({
+      where: { id: In(bookingIds) },
+    });
+    const kostIds = Array.from(new Set(bookings.map((b) => b.kostId)));
+    const kosts =
+      kostIds.length > 0
+        ? await this.kostRepository.find({ where: { id: In(kostIds) } })
+        : [];
+    const ownerMap = new Map(kosts.map((k) => [k.id, k.ownerId]));
+    const bookingMap = new Map<number, ChatBookingSummary>();
+    for (const b of bookings) {
+      bookingMap.set(b.id, {
+        id: b.id,
+        status: b.status,
+        bookingType: b.bookingType,
+        startDate: b.startDate,
+        surveyDateTime: b.surveyDateTime ?? null,
+        tenantName: b.tenantName,
+        ownerId: ownerMap.get(b.kostId) ?? 0,
+      });
+    }
+
+    return messages.map((m) =>
+      m.bookingId
+        ? Object.assign(m, { booking: bookingMap.get(m.bookingId) ?? null })
+        : m,
+    );
+  }
+
+  async findMessages(
+    kostId: number,
+    userId?: number,
+  ): Promise<Array<ChatMessage & { booking?: ChatBookingSummary | null }>> {
     if (!userId || userId <= 0) {
       return [];
     }
-    return this.chatRepository
+    const messages = await this.chatRepository
       .createQueryBuilder('msg')
       .where('msg.kostId = :kostId', { kostId })
       .andWhere('(msg.senderId = :userId OR msg.receiverId = :userId)', {
@@ -40,6 +103,7 @@ export class ChatsService {
       .orderBy('msg.createdAt', 'ASC')
       .addOrderBy('msg.id', 'ASC')
       .getMany();
+    return this.attachBookingSummaries(messages);
   }
 
   async createMessage(payload: {
@@ -49,7 +113,8 @@ export class ChatsService {
     senderAvatar?: string;
     receiverId: number;
     message: string;
-  }): Promise<ChatMessage> {
+    bookingId?: number | null;
+  }): Promise<ChatMessage & { booking?: ChatBookingSummary | null }> {
     const text = payload.message?.trim();
     if (!text) {
       throw new BadRequestException('Pesan tidak boleh kosong');
@@ -75,9 +140,14 @@ export class ChatsService {
       senderAvatar: resolvedAvatar,
       receiverId: payload.receiverId || 1,
       message: text,
+      bookingId: payload.bookingId ?? null,
       status: 'SENT',
     });
     const saved = await this.chatRepository.save(msg);
+    if (saved.bookingId) {
+      const [enriched] = await this.attachBookingSummaries([saved]);
+      return enriched;
+    }
     return saved;
   }
 
@@ -225,6 +295,11 @@ export class ChatsService {
     if (!kost) {
       throw new NotFoundException('Properti tidak ditemukan');
     }
+    if (!this.isKostCategory(kost.propertyCategory)) {
+      throw new ForbiddenException(
+        'Fitur Grup Penghuni hanya tersedia untuk properti Kost.',
+      );
+    }
     const setting = await this.getOrCreateGroupSetting(kostId);
 
     if (kost.ownerId === userId) {
@@ -351,6 +426,9 @@ export class ChatsService {
 
     const rooms: Array<Record<string, any>> = [];
     for (const kost of allKosts) {
+      if (!this.isKostCategory(kost.propertyCategory)) {
+        continue;
+      }
       const setting = settingMap.get(kost.id);
       const isAdmin = kost.ownerId === userId;
       const removed = (setting?.removedUserIds || []).filter((x) => x !== '');

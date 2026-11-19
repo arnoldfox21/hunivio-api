@@ -195,6 +195,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           senderName: dto.tenantName,
           receiverId: kost.ownerId,
           message: autoMessage,
+          bookingId: saved.id,
         });
         await this.chatsGateway.notifyNewChatMessage(autoChat);
       } catch {
@@ -377,7 +378,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const cancelled = await this.dataSource.transaction(async (manager) => {
       const bookingRepo = manager.getRepository(Booking);
       const locked = await bookingRepo.findOne({
         where: { id },
@@ -393,6 +394,29 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       locked.status = 'DIBATALKAN';
       return bookingRepo.save(locked);
     });
+
+    if (
+      cancelled.userId &&
+      cancelled.userId > 0 &&
+      kost.ownerId !== cancelled.userId &&
+      requesterId !== cancelled.userId
+    ) {
+      const jenis = cancelled.bookingType === 'SURVEI' ? 'survei' : 'sewa';
+      try {
+        const autoChat = await this.chatsService.createMessage({
+          kostId: cancelled.kostId,
+          senderId: kost.ownerId,
+          senderName: kost.ownerName || 'Pemilik Properti',
+          receiverId: cancelled.userId,
+          message: `Pengajuan ${jenis} Anda untuk ${kost.name} telah DIBATALKAN oleh pemilik.`,
+        });
+        await this.chatsGateway.notifyNewChatMessage(autoChat);
+      } catch {
+        // Jangan gagalkan pembatalan jika notifikasi chat gagal
+      }
+    }
+
+    return cancelled;
   }
 
   private get midtransConfig() {

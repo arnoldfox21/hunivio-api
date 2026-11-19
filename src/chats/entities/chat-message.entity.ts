@@ -32,6 +32,10 @@ export class ChatMessage {
   @Column({ type: 'text' })
   message: string;
 
+  @Index()
+  @Column({ type: 'int', nullable: true })
+  bookingId: number | null;
+
   @Column({ default: 'SENT' })
   status: string; // 'SENT' | 'DELIVERED' | 'READ'
 
