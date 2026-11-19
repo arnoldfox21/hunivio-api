@@ -81,9 +81,9 @@ export class UpdateUserRoleDto {
   @IsString()
   role: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsInt()
-  requesterId: number;
+  requesterId?: number;
 }
 
 export class CompleteOnboardingDto {
