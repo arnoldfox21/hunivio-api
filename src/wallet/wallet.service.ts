@@ -18,6 +18,7 @@ import { Kost } from '../kosts/entities/kost.entity';
 import { CreateTopupDto } from './dto/create-topup.dto';
 import { BookingsService } from '../bookings/bookings.service';
 import { DuitkuService, DuitkuMappedStatus } from '../payments/duitku.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export const FREE_PROPERTY_QUOTA = 2;
 export const EXTRA_PROPERTY_SLOT_FEE = 10000;
@@ -55,6 +56,7 @@ export class WalletService {
     @Inject(forwardRef(() => BookingsService))
     private readonly bookingsService: BookingsService,
     private readonly duitkuService: DuitkuService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private _assertEligibleUser(user: User): void {
@@ -345,7 +347,9 @@ export class WalletService {
     mappedStatus: DuitkuMappedStatus,
     paymentType?: string,
   ): Promise<{ transaction: WalletTransaction; creditBalance: number }> {
-    return this.dataSource.transaction(async (manager) => {
+    let statusChangedTo: DuitkuMappedStatus | null = null;
+
+    const result = await this.dataSource.transaction(async (manager) => {
       const txRepo = manager.getRepository(WalletTransaction);
       const userRepo = manager.getRepository(User);
 
@@ -365,7 +369,8 @@ export class WalletService {
         throw new NotFoundException('Pengguna tidak ditemukan.');
       }
 
-      const wasPaid = tx.status === 'PAID';
+      const prevStatus = tx.status;
+      const wasPaid = prevStatus === 'PAID';
       if (!wasPaid) {
         tx.status = mappedStatus;
         if (paymentType) {
@@ -377,6 +382,9 @@ export class WalletService {
           await userRepo.save(user);
         }
         await txRepo.save(tx);
+        if (prevStatus !== mappedStatus) {
+          statusChangedTo = mappedStatus;
+        }
       } else if (paymentType && !tx.paymentMethod) {
         tx.paymentMethod = paymentType;
         await txRepo.save(tx);
@@ -387,6 +395,39 @@ export class WalletService {
         creditBalance: Number(user.creditBalance ?? 0),
       };
     });
+
+    if (statusChangedTo === 'PAID') {
+      const amtStr = Number(result.transaction.amount).toLocaleString('id-ID');
+      const balStr = result.creditBalance.toLocaleString('id-ID');
+      await this.notificationsService
+        .create({
+          userId: result.transaction.userId,
+          type: 'WALLET',
+          title: 'Top-Up Saldo Kredit Berhasil',
+          body: `Top-up saldo kredit sebesar Rp${amtStr} (${result.transaction.orderId}) telah diterima. Saldo kredit Anda sekarang Rp${balStr}.`,
+          targetUrl: '/dashboard?tab=WALLET',
+        })
+        .catch(() => null);
+    } else if (statusChangedTo === 'FAILED' || statusChangedTo === 'EXPIRED') {
+      const amtStr = Number(result.transaction.amount).toLocaleString('id-ID');
+      await this.notificationsService
+        .create({
+          userId: result.transaction.userId,
+          type: 'WALLET',
+          title:
+            statusChangedTo === 'FAILED'
+              ? 'Pembayaran Top-Up Gagal'
+              : 'Invoice Top-Up Kedaluwarsa',
+          body:
+            statusChangedTo === 'FAILED'
+              ? `Pembayaran top-up saldo kredit sebesar Rp${amtStr} (${result.transaction.orderId}) gagal diproses.`
+              : `Invoice top-up saldo kredit sebesar Rp${amtStr} (${result.transaction.orderId}) telah melewati batas waktu pembayaran.`,
+          targetUrl: '/dashboard?tab=WALLET',
+        })
+        .catch(() => null);
+    }
+
+    return result;
   }
 
   async syncTopupStatus(userId: number, orderId: string) {
