@@ -522,6 +522,11 @@ export class WalletService {
       throw new UnauthorizedException('Signature webhook Midtrans tidak valid.');
     }
 
+    // Midtrans Dashboard "Test Notification URL" mengirim order_id berawalan payment_notif_test_
+    if (orderId.startsWith('payment_notif_test_')) {
+      return { ok: true, test: true, orderId };
+    }
+
     if (orderId.startsWith('HNV-BOOK-')) {
       const updatedBooking =
         await this.bookingsService.applyMidtransWebhookPayment(

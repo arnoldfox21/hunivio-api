@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Patch,
@@ -63,6 +64,7 @@ export class WalletController {
   }
 
   @Post('midtrans-webhook')
+  @HttpCode(200)
   handleMidtransWebhook(@Body() payload: Record<string, unknown>) {
     return this.walletService.handleMidtransWebhook(payload);
   }
