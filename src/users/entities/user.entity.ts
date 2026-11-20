@@ -47,6 +47,9 @@ export class User {
   @Column({ default: 'PENYEWA' })
   role: string;
 
+  @Column({ type: 'jsonb', default: [] })
+  roles: string[];
+
   @Column({ default: false })
   isVerified: boolean;
 

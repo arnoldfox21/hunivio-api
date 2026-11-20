@@ -1,6 +1,8 @@
 import {
+  IsArray,
   IsBoolean,
   IsEmail,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -92,6 +94,11 @@ export class CompleteOnboardingDto {
   role: string;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  roles?: string[];
+
+  @IsOptional()
   @IsString()
   preferredCategory?: string;
 
@@ -106,6 +113,36 @@ export class CompleteOnboardingDto {
   @IsOptional()
   @IsBoolean()
   showWhatsapp?: boolean;
+}
+
+export class RegisterRoleDto {
+  @IsNotEmpty()
+  @IsString()
+  @IsIn(['PENYEWA', 'PEMILIK_KOST'], {
+    message: 'Peran yang dipilih harus Penyewa atau Pemilik Properti.',
+  })
+  role: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  switchNow?: boolean;
+}
+
+export class SwitchRoleDto {
+  @IsNotEmpty()
+  @IsString()
+  @IsIn(['PENYEWA', 'PEMILIK_KOST'], {
+    message: 'Mode peran harus Penyewa atau Pemilik Properti.',
+  })
+  role: string;
 }
 
 export class EmailLoginDto {

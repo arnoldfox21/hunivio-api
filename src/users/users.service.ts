@@ -18,6 +18,7 @@ import {
   CompleteOnboardingDto,
   EmailLoginDto,
   SetPasswordDto,
+  RegisterRoleDto,
 } from './dto/google-auth.dto';
 import { signAuthToken } from '../auth/jwt.util';
 import { StorageService } from '../storage/storage.service';
@@ -42,6 +43,9 @@ export class UsersService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    await this.userRepository.query(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS "roles" jsonb NOT NULL DEFAULT '[]'::jsonb`,
+    );
     if (process.env.ENABLE_AUTO_SEED === 'true') {
       await this._ensureDefaultStaffPartner();
     }
@@ -69,6 +73,36 @@ export class UsersService implements OnModuleInit {
     await this.userRepository.save(partner);
   }
 
+  private _getEffectiveRoles(user: User): string[] {
+    const activeRole = (user.role || 'PENYEWA').trim().toUpperCase();
+    if (
+      activeRole === 'STAFF' ||
+      activeRole === 'ADMINISTRATOR' ||
+      activeRole === 'PENULIS'
+    ) {
+      return [activeRole];
+    }
+
+    const rawRoles = Array.isArray(user.roles) ? user.roles : [];
+    const set = new Set<string>();
+    for (const r of rawRoles) {
+      const upper = String(r || '').trim().toUpperCase();
+      if (upper === 'PENYEWA' || upper === 'PEMILIK_KOST') {
+        set.add(upper);
+      }
+    }
+    if (activeRole === 'PENYEWA' || activeRole === 'PEMILIK_KOST') {
+      set.add(activeRole);
+    }
+    if (set.size === 0) {
+      set.add('PENYEWA');
+    }
+    const ordered: string[] = [];
+    if (set.has('PENYEWA')) ordered.push('PENYEWA');
+    if (set.has('PEMILIK_KOST')) ordered.push('PEMILIK_KOST');
+    return ordered;
+  }
+
   sanitizeUser(user: User, includePrivate = false) {
     const upperRole = (user.role || '').toUpperCase();
     const isStaffOrAdmin = upperRole === 'STAFF' || upperRole === 'ADMINISTRATOR';
@@ -81,6 +115,7 @@ export class UsersService implements OnModuleInit {
       city: user.city,
       coverUrl: user.coverUrl,
       role: user.role,
+      roles: this._getEffectiveRoles(user),
       isVerified: Boolean(user.isVerified) || isStaffOrAdmin,
       verificationStatus: isStaffOrAdmin
         ? 'VERIFIED'
@@ -292,6 +327,8 @@ export class UsersService implements OnModuleInit {
         email,
         name: displayName,
         avatarUrl: resolvedAvatarUrl,
+        role: 'PENYEWA',
+        roles: ['PENYEWA'],
         onboardingCompleted: false,
         lastLoginAt: new Date(),
       });
@@ -347,9 +384,17 @@ export class UsersService implements OnModuleInit {
       .orderBy('user.id', 'ASC');
 
     if (query?.role && query.role.trim() !== '' && query.role !== 'SEMUA') {
-      qb.andWhere('UPPER(user.role) = :role', {
-        role: query.role.trim().toUpperCase(),
-      });
+      const filterRole = query.role.trim().toUpperCase();
+      if (filterRole === 'PENYEWA' || filterRole === 'PEMILIK_KOST') {
+        qb.andWhere('(UPPER(user.role) = :role OR user.roles @> :roleJson)', {
+          role: filterRole,
+          roleJson: JSON.stringify([filterRole]),
+        });
+      } else {
+        qb.andWhere('UPPER(user.role) = :role', {
+          role: filterRole,
+        });
+      }
     }
 
     if (query?.search && query.search.trim() !== '') {
@@ -472,6 +517,18 @@ export class UsersService implements OnModuleInit {
     }
 
     user.role = normalizedRole;
+    if (normalizedRole === 'PENYEWA' || normalizedRole === 'PEMILIK_KOST') {
+      const existing = Array.isArray(user.roles) ? user.roles : [];
+      const nextSet = new Set(
+        existing
+          .map((r) => String(r || '').trim().toUpperCase())
+          .filter((r) => r === 'PENYEWA' || r === 'PEMILIK_KOST'),
+      );
+      nextSet.add(normalizedRole);
+      user.roles = Array.from(nextSet);
+    } else {
+      user.roles = [normalizedRole];
+    }
     return this.userRepository.save(user);
   }
 
@@ -490,13 +547,32 @@ export class UsersService implements OnModuleInit {
     }
 
     const normalizedRole = dto.role.trim().toUpperCase();
-    if (normalizedRole !== 'PENYEWA' && normalizedRole !== 'PEMILIK_KOST') {
+    const requestedRoles = Array.isArray(dto.roles)
+      ? dto.roles
+          .map((r) => String(r || '').trim().toUpperCase())
+          .filter((r) => r === 'PENYEWA' || r === 'PEMILIK_KOST')
+      : [];
+
+    let finalRoles: string[] = [];
+    let activeRole = 'PENYEWA';
+    if (
+      normalizedRole === 'BOTH' ||
+      (requestedRoles.includes('PENYEWA') &&
+        requestedRoles.includes('PEMILIK_KOST'))
+    ) {
+      finalRoles = ['PENYEWA', 'PEMILIK_KOST'];
+      activeRole = 'PENYEWA';
+    } else if (normalizedRole === 'PENYEWA' || normalizedRole === 'PEMILIK_KOST') {
+      finalRoles = [normalizedRole];
+      activeRole = normalizedRole;
+    } else {
       throw new BadRequestException(
-        'Pilih peran sebagai Penyewa atau Pemilik Properti.',
+        'Pilih peran sebagai Penyewa, Pemilik Properti, atau Keduanya.',
       );
     }
 
-    user.role = normalizedRole;
+    user.role = activeRole;
+    user.roles = finalRoles;
     if (dto.preferredCategory !== undefined) {
       user.preferredCategory = dto.preferredCategory.trim();
     }
@@ -507,6 +583,131 @@ export class UsersService implements OnModuleInit {
       user.phone = dto.phone.trim();
     }
     user.onboardingCompleted = true;
+
+    const saved = await this.userRepository.save(user);
+    const accessToken = signAuthToken({
+      userId: saved.id,
+      role: saved.role,
+      email: saved.email,
+    });
+
+    return {
+      user: this.sanitizeUser(saved, true),
+      accessToken,
+    };
+  }
+
+  async registerAdditionalRole(
+    userId: number,
+    dto: RegisterRoleDto,
+  ): Promise<{
+    user: ReturnType<UsersService['sanitizeUser']>;
+    accessToken: string;
+  }> {
+    const user = await this.findOne(userId);
+    const currentRole = (user.role || 'PENYEWA').trim().toUpperCase();
+    if (
+      currentRole === 'STAFF' ||
+      currentRole === 'ADMINISTRATOR' ||
+      currentRole === 'PENULIS'
+    ) {
+      throw new ForbiddenException(
+        'Akun internal atau penulis tidak dapat mendaftar peran tambahan secara mandiri.',
+      );
+    }
+
+    const targetRole = dto.role.trim().toUpperCase();
+    if (targetRole !== 'PENYEWA' && targetRole !== 'PEMILIK_KOST') {
+      throw new BadRequestException(
+        'Peran tambahan harus Penyewa atau Pemilik Properti.',
+      );
+    }
+
+    const nextPhone =
+      dto.phone !== undefined && dto.phone.trim().length > 0
+        ? dto.phone.trim()
+        : (user.phone || '').trim();
+    const nextCity =
+      dto.city !== undefined && dto.city.trim().length > 0
+        ? dto.city.trim()
+        : (user.city || '').trim();
+
+    if (targetRole === 'PEMILIK_KOST') {
+      if (nextPhone.replace(/\D/g, '').length < 8) {
+        throw new BadRequestException(
+          'Nomor WhatsApp aktif wajib diisi untuk mendaftar sebagai Pemilik Properti.',
+        );
+      }
+      if (!nextCity) {
+        throw new BadRequestException(
+          'Kota domisili wajib diisi untuk mendaftar sebagai Pemilik Properti.',
+        );
+      }
+    }
+
+    if (nextPhone) user.phone = nextPhone;
+    if (nextCity) user.city = nextCity;
+
+    const roleSet = new Set(this._getEffectiveRoles(user));
+    roleSet.add(targetRole);
+    const ordered: string[] = [];
+    if (roleSet.has('PENYEWA')) ordered.push('PENYEWA');
+    if (roleSet.has('PEMILIK_KOST')) ordered.push('PEMILIK_KOST');
+    user.roles = ordered;
+
+    if (dto.switchNow !== false) {
+      user.role = targetRole;
+    }
+    user.onboardingCompleted = true;
+
+    const saved = await this.userRepository.save(user);
+    const accessToken = signAuthToken({
+      userId: saved.id,
+      role: saved.role,
+      email: saved.email,
+    });
+
+    return {
+      user: this.sanitizeUser(saved, true),
+      accessToken,
+    };
+  }
+
+  async switchActiveRole(
+    userId: number,
+    rawRole: string,
+  ): Promise<{
+    user: ReturnType<UsersService['sanitizeUser']>;
+    accessToken: string;
+  }> {
+    const user = await this.findOne(userId);
+    const currentRole = (user.role || 'PENYEWA').trim().toUpperCase();
+    if (
+      currentRole === 'STAFF' ||
+      currentRole === 'ADMINISTRATOR' ||
+      currentRole === 'PENULIS'
+    ) {
+      throw new ForbiddenException(
+        'Akun ini tidak mendukung perpindahan mode Penyewa/Pemilik.',
+      );
+    }
+
+    const targetRole = String(rawRole || '').trim().toUpperCase();
+    if (targetRole !== 'PENYEWA' && targetRole !== 'PEMILIK_KOST') {
+      throw new BadRequestException(
+        'Mode peran harus Penyewa atau Pemilik Properti.',
+      );
+    }
+
+    const effectiveRoles = this._getEffectiveRoles(user);
+    if (!effectiveRoles.includes(targetRole)) {
+      throw new ForbiddenException(
+        'Akun Anda belum terdaftar pada peran tersebut. Silakan daftar terlebih dahulu.',
+      );
+    }
+
+    user.role = targetRole;
+    user.roles = effectiveRoles;
 
     const saved = await this.userRepository.save(user);
     const accessToken = signAuthToken({
@@ -676,6 +877,7 @@ export class UsersService implements OnModuleInit {
           }
           await this.kostRepository.save(targetKost);
           if ((user.role || '').toUpperCase() === 'PENYEWA') {
+            user.roles = ['PENYEWA', 'PEMILIK_KOST'];
             user.role = 'PEMILIK_KOST';
           }
         }

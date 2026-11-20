@@ -959,6 +959,19 @@ export class KostsService implements OnModuleInit {
           );
         }
 
+        const targetActiveRole = (targetUser.role || '').toUpperCase();
+        const targetRoles = Array.isArray(targetUser.roles)
+          ? targetUser.roles.map((r) => String(r || '').trim().toUpperCase())
+          : [];
+        const isOwnerAccount =
+          targetActiveRole === 'PEMILIK_KOST' ||
+          targetRoles.includes('PEMILIK_KOST');
+        if (!isOwnerAccount) {
+          throw new BadRequestException(
+            'Kepemilikan properti hanya dapat dipindahkan ke akun Pemilik Properti.',
+          );
+        }
+
         const activeEscrowCount = await bookingRepo.count({
           where: {
             kostId: id,
@@ -978,12 +991,6 @@ export class KostsService implements OnModuleInit {
           { kostId: id, ownerId: IsNull() },
           { ownerId: oldOwnerId },
         );
-
-        // Upgrade role ke PEMILIK_KOST jika sebelumnya masih PENYEWA
-        if ((targetUser.role || '').toUpperCase() === 'PENYEWA') {
-          targetUser.role = 'PEMILIK_KOST';
-          await userRepo.save(targetUser);
-        }
 
         kost.ownerId = targetUser.id;
         kost.ownerName = targetUser.name.trim() || kost.ownerName;

@@ -20,6 +20,8 @@ import {
   CompleteOnboardingDto,
   EmailLoginDto,
   SetPasswordDto,
+  RegisterRoleDto,
+  SwitchRoleDto,
 } from './dto/google-auth.dto';
 import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
@@ -66,6 +68,24 @@ export class UsersController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.usersService.completeOnboarding(req.user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('register-role')
+  registerAdditionalRole(
+    @Body() dto: RegisterRoleDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.usersService.registerAdditionalRole(req.user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('switch-role')
+  switchActiveRole(
+    @Body() dto: SwitchRoleDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.usersService.switchActiveRole(req.user.userId, dto.role);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
