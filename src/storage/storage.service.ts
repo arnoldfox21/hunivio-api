@@ -92,10 +92,40 @@ export class StorageService {
     const trimmed = typeof value === 'string' ? value.trim() : '';
     if (!trimmed || !this.publicUrl) return trimmed;
     if (/^https?:\/\//i.test(trimmed)) return trimmed;
-    if (trimmed.startsWith('/kosts/') || trimmed.startsWith('kosts/')) {
+    if (
+      trimmed.startsWith('/kosts/') ||
+      trimmed.startsWith('kosts/') ||
+      trimmed.startsWith('/articles/') ||
+      trimmed.startsWith('articles/')
+    ) {
       return `${this.publicUrl}/${trimmed.replace(/^\/+/, '')}`;
     }
     return trimmed;
+  }
+
+  /**
+   * Extracts R2-managed image URLs/paths referenced in HTML `src="..."` attributes.
+   */
+  extractManagedImageUrlsFromHtml(html: string | null | undefined): string[] {
+    if (!html) return [];
+    const results = new Set<string>();
+    const prefix = this.publicUrl ? `${this.publicUrl}/` : '';
+    const srcRegex = /\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/gi;
+    let match: RegExpExecArray | null;
+    while ((match = srcRegex.exec(html)) !== null) {
+      const url = (match[1] ?? match[2] ?? '').trim();
+      if (!url) continue;
+      if (
+        (prefix && url.startsWith(prefix)) ||
+        url.startsWith('/kosts/') ||
+        url.startsWith('kosts/') ||
+        url.startsWith('/articles/') ||
+        url.startsWith('articles/')
+      ) {
+        results.add(url);
+      }
+    }
+    return Array.from(results);
   }
 
   async deleteByUrl(url: string): Promise<void> {
@@ -106,9 +136,9 @@ export class StorageService {
     const prefix = this.publicUrl ? `${this.publicUrl}/` : '';
     if (prefix && trimmed.startsWith(prefix)) {
       key = trimmed.slice(prefix.length).split('?')[0];
-    } else if (trimmed.startsWith('/kosts/')) {
+    } else if (trimmed.startsWith('/kosts/') || trimmed.startsWith('/articles/')) {
       key = trimmed.slice(1).split('?')[0];
-    } else if (trimmed.startsWith('kosts/')) {
+    } else if (trimmed.startsWith('kosts/') || trimmed.startsWith('articles/')) {
       key = trimmed.split('?')[0];
     }
     if (!key) return;

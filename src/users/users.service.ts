@@ -8,9 +8,25 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { Kost } from '../kosts/entities/kost.entity';
+import { KostReport } from '../kosts/entities/kost-report.entity';
+import { UserFavorite } from '../kosts/entities/user-favorite.entity';
+import { Article } from '../articles/entities/article.entity';
+import { Booking } from '../bookings/entities/booking.entity';
+import { PointTransaction } from '../bookings/entities/point-transaction.entity';
+import { ChatMessage } from '../chats/entities/chat-message.entity';
+import { KostGroupMessage } from '../chats/entities/kost-group-message.entity';
+import { KostGroupSetting } from '../chats/entities/kost-group-setting.entity';
+import { Notification } from '../notifications/entities/notification.entity';
+import { OwnerPost } from '../posts/entities/owner-post.entity';
+import { OwnerPostComment } from '../posts/entities/owner-post-comment.entity';
+import { OwnerPostLike } from '../posts/entities/owner-post-like.entity';
+import { Review } from '../reviews/entities/review.entity';
+import { ReviewReport } from '../reviews/entities/review-report.entity';
+import { PayoutRequest } from '../wallet/entities/payout-request.entity';
+import { WalletTransaction } from '../wallet/entities/wallet-transaction.entity';
 import {
   GoogleAuthDto,
   UpdateUserDto,
@@ -21,6 +37,11 @@ import {
   RegisterRoleDto,
 } from './dto/google-auth.dto';
 import { signAuthToken } from '../auth/jwt.util';
+import {
+  normalizeCityNameOrThrow,
+  normalizeIndonesianPhoneOrThrow,
+  normalizeUsernameOrThrow,
+} from '../common/validation.util';
 import { StorageService } from '../storage/storage.service';
 
 export const GOOGLE_OAUTH_CONFIG = {
@@ -443,7 +464,10 @@ export class UsersService implements OnModuleInit {
       user.name = dto.name.trim();
     }
     if (dto.phone !== undefined) {
-      user.phone = dto.phone.trim();
+      const trimmedPhone = dto.phone.trim();
+      user.phone = trimmedPhone
+        ? normalizeIndonesianPhoneOrThrow(trimmedPhone)
+        : '';
     }
     if (dto.showWhatsapp !== undefined) {
       user.showWhatsapp = Boolean(dto.showWhatsapp);
@@ -457,13 +481,14 @@ export class UsersService implements OnModuleInit {
       }
     }
     if (dto.username !== undefined) {
-      user.username = dto.username.trim().replace(/^@+/, '');
+      user.username = normalizeUsernameOrThrow(dto.username);
     }
     if (dto.bio !== undefined) {
       user.bio = dto.bio.trim();
     }
     if (dto.city !== undefined) {
-      user.city = dto.city.trim();
+      const trimmedCity = dto.city.trim();
+      user.city = trimmedCity ? normalizeCityNameOrThrow(trimmedCity) : '';
     }
     const previousAvatar = user.avatarUrl;
     const previousCover = user.coverUrl;
@@ -577,10 +602,10 @@ export class UsersService implements OnModuleInit {
       user.preferredCategory = dto.preferredCategory.trim();
     }
     if (dto.city !== undefined && dto.city.trim().length > 0) {
-      user.city = dto.city.trim();
+      user.city = normalizeCityNameOrThrow(dto.city);
     }
     if (dto.phone !== undefined && dto.phone.trim().length > 0) {
-      user.phone = dto.phone.trim();
+      user.phone = normalizeIndonesianPhoneOrThrow(dto.phone);
     }
     user.onboardingCompleted = true;
 
@@ -623,26 +648,23 @@ export class UsersService implements OnModuleInit {
       );
     }
 
-    const nextPhone =
+    const rawPhone =
       dto.phone !== undefined && dto.phone.trim().length > 0
         ? dto.phone.trim()
         : (user.phone || '').trim();
-    const nextCity =
+    const rawCity =
       dto.city !== undefined && dto.city.trim().length > 0
         ? dto.city.trim()
         : (user.city || '').trim();
 
+    let nextPhone = rawPhone;
+    let nextCity = rawCity;
     if (targetRole === 'PEMILIK_KOST') {
-      if (nextPhone.replace(/\D/g, '').length < 8) {
-        throw new BadRequestException(
-          'Nomor WhatsApp aktif wajib diisi untuk mendaftar sebagai Pemilik Properti.',
-        );
-      }
-      if (!nextCity) {
-        throw new BadRequestException(
-          'Kota domisili wajib diisi untuk mendaftar sebagai Pemilik Properti.',
-        );
-      }
+      nextPhone = normalizeIndonesianPhoneOrThrow(rawPhone);
+      nextCity = normalizeCityNameOrThrow(rawCity);
+    } else {
+      if (rawPhone) nextPhone = normalizeIndonesianPhoneOrThrow(rawPhone);
+      if (rawCity) nextCity = normalizeCityNameOrThrow(rawCity);
     }
 
     if (nextPhone) user.phone = nextPhone;
@@ -822,12 +844,9 @@ export class UsersService implements OnModuleInit {
       }
     }
     const preferredDate = (body.preferredDate || '').trim();
-    const nextPhone = (body.phone || user.phone || '').trim();
-    if (!nextPhone || nextPhone.length < 8) {
-      throw new BadRequestException(
-        'Nomor WhatsApp aktif wajib diisi agar Staff dapat berkoordinasi.',
-      );
-    }
+    const nextPhone = normalizeIndonesianPhoneOrThrow(
+      (body.phone || user.phone || '').trim(),
+    );
     user.phone = nextPhone;
     user.verificationStatus = 'PENDING';
     user.verificationSurveyDate = preferredDate;
@@ -892,6 +911,49 @@ export class UsersService implements OnModuleInit {
     return this.userRepository.save(user);
   }
 
+  async getDeletionSummary(id: number): Promise<{
+    kostCount: number;
+    articleCount: number;
+    postCount: number;
+    bookingCount: number;
+    reviewCount: number;
+    favoriteCount: number;
+    payoutBalance: number;
+    creditBalance: number;
+  }> {
+    const user = await this.findOne(id);
+    const manager = this.userRepository.manager;
+    const [
+      kostCount,
+      articleCount,
+      postCount,
+      bookingCount,
+      reviewCount,
+      favoriteCount,
+    ] = await Promise.all([
+      manager.count(Kost, { where: { ownerId: id } }),
+      manager.count(Article, { where: { authorId: id } }),
+      manager.count(OwnerPost, { where: { ownerId: id } }),
+      manager
+        .createQueryBuilder(Booking, 'b')
+        .where('b.userId = :id OR b.ownerId = :id', { id })
+        .getCount(),
+      manager.count(Review, { where: { userId: id } }),
+      manager.count(UserFavorite, { where: { userId: id } }),
+    ]);
+
+    return {
+      kostCount,
+      articleCount,
+      postCount,
+      bookingCount,
+      reviewCount,
+      favoriteCount,
+      payoutBalance: Number(user.payoutBalance || 0),
+      creditBalance: Number(user.creditBalance || 0),
+    };
+  }
+
   async remove(
     id: number,
     requesterId?: number,
@@ -911,11 +973,95 @@ export class UsersService implements OnModuleInit {
         'Akun Administrator lain tidak dapat dihapus.',
       );
     }
-    const imagesToDelete = [user.avatarUrl, user.coverUrl].filter(Boolean);
-    await this.userRepository.remove(user);
-    if (imagesToDelete.length > 0) {
+
+    const imagesToDelete = new Set<string>();
+    if (user.avatarUrl) imagesToDelete.add(user.avatarUrl);
+    if (user.coverUrl) imagesToDelete.add(user.coverUrl);
+
+    await this.userRepository.manager.transaction(async (manager) => {
+      const ownedKosts = await manager.find(Kost, {
+        where: { ownerId: id },
+        select: ['id', 'images'],
+      });
+      const ownedKostIds = ownedKosts.map((k) => k.id);
+      for (const k of ownedKosts) {
+        if (Array.isArray(k.images)) {
+          for (const img of k.images) {
+            if (img) imagesToDelete.add(img);
+          }
+        }
+      }
+
+      const ownedPosts = await manager.find(OwnerPost, {
+        where: { ownerId: id },
+        select: ['id', 'imageUrl'],
+      });
+      const ownedPostIds = ownedPosts.map((p) => p.id);
+      for (const p of ownedPosts) {
+        if (p.imageUrl) imagesToDelete.add(p.imageUrl);
+      }
+
+      const ownedArticles = await manager.find(Article, {
+        where: { authorId: id },
+        select: ['id', 'coverImageUrl', 'contentHtml'],
+      });
+      for (const a of ownedArticles) {
+        if (a.coverImageUrl) imagesToDelete.add(a.coverImageUrl);
+        for (const htmlImg of this.storageService.extractManagedImageUrlsFromHtml(
+          a.contentHtml,
+        )) {
+          imagesToDelete.add(htmlImg);
+        }
+      }
+
+      // Clean up child & related records before removing user & owned kosts
+      await manager.delete(Notification, { userId: id });
+      await manager.delete(UserFavorite, { userId: id });
+      await manager.delete(PointTransaction, { userId: id });
+      await manager.delete(WalletTransaction, { userId: id });
+      await manager.delete(PayoutRequest, { userId: id });
+      await manager.delete(ReviewReport, { reporterId: id });
+      await manager.delete(KostReport, { reporterId: id });
+      await manager.delete(Review, { userId: id });
+      await manager.delete(OwnerPostComment, { userId: id });
+      await manager.delete(OwnerPostLike, { userId: id });
+      if (ownedPostIds.length > 0) {
+        await manager.delete(OwnerPostComment, { postId: In(ownedPostIds) });
+        await manager.delete(OwnerPostLike, { postId: In(ownedPostIds) });
+      }
+      await manager.delete(OwnerPost, { ownerId: id });
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(ChatMessage)
+        .where('senderId = :id OR receiverId = :id', { id })
+        .execute();
+      await manager.delete(KostGroupMessage, { senderId: id });
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(Booking)
+        .where('userId = :id OR ownerId = :id', { id })
+        .execute();
+
+      if (ownedKostIds.length > 0) {
+        await manager.delete(KostGroupMessage, { kostId: In(ownedKostIds) });
+        await manager.delete(KostGroupSetting, { kostId: In(ownedKostIds) });
+        await manager.delete(KostReport, { kostId: In(ownedKostIds) });
+        await manager.delete(UserFavorite, { kostId: In(ownedKostIds) });
+        await manager.delete(Review, { kostId: In(ownedKostIds) });
+        await manager.delete(Kost, { id: In(ownedKostIds) });
+      }
+
+      await manager.delete(Article, { authorId: id });
+      await manager.delete(User, { id });
+    });
+
+    if (imagesToDelete.size > 0) {
       void Promise.allSettled(
-        imagesToDelete.map((url) => this.storageService.deleteByUrl(url)),
+        Array.from(imagesToDelete).map((url) =>
+          this.storageService.deleteByUrl(url),
+        ),
       );
     }
     return { deleted: true, id };

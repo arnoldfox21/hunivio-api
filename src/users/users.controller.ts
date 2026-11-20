@@ -221,6 +221,12 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('users/me/deletion-summary')
+  getSelfDeletionSummary(@Req() req: AuthenticatedRequest) {
+    return this.usersService.getDeletionSummary(req.user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete('users/me')
   removeSelf(@Req() req: AuthenticatedRequest) {
     return this.usersService.remove(req.user.userId);

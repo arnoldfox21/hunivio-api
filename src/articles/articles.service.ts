@@ -352,6 +352,9 @@ export class ArticlesService {
       );
     }
 
+    const previousCover = article.coverImageUrl;
+    const previousHtml = article.contentHtml;
+
     if (dto.title !== undefined) {
       article.title = dto.title.trim();
     }
@@ -398,6 +401,24 @@ export class ArticlesService {
     }
 
     const saved = await this.articleRepository.save(article);
+
+    if (previousCover && previousCover !== saved.coverImageUrl) {
+      void this.storageService.deleteByUrl(previousCover);
+    }
+    if (dto.contentHtml !== undefined && previousHtml !== saved.contentHtml) {
+      const prevImgs =
+        this.storageService.extractManagedImageUrlsFromHtml(previousHtml);
+      const nextImgSet = new Set(
+        this.storageService.extractManagedImageUrlsFromHtml(saved.contentHtml),
+      );
+      const removedImgs = prevImgs.filter((url) => !nextImgSet.has(url));
+      if (removedImgs.length > 0) {
+        void Promise.allSettled(
+          removedImgs.map((url) => this.storageService.deleteByUrl(url)),
+        );
+      }
+    }
+
     return this.serializeArticle(saved);
   }
 
@@ -412,10 +433,16 @@ export class ArticlesService {
         'Anda hanya dapat menghapus artikel milik sendiri.',
       );
     }
-    if (article.coverImageUrl) {
-      void this.storageService.deleteByUrl(article.coverImageUrl);
-    }
+    const urlsToDelete = [
+      ...(article.coverImageUrl ? [article.coverImageUrl] : []),
+      ...this.storageService.extractManagedImageUrlsFromHtml(article.contentHtml),
+    ];
     await this.articleRepository.delete(id);
+    if (urlsToDelete.length > 0) {
+      void Promise.allSettled(
+        urlsToDelete.map((url) => this.storageService.deleteByUrl(url)),
+      );
+    }
     return { deleted: true, id };
   }
 

@@ -18,6 +18,7 @@ import {
 } from './dto/create-booking.dto';
 import { JwtAuthGuard, AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { normalizeIndonesianPhoneOrThrow } from '../common/validation.util';
 
 @UseGuards(JwtAuthGuard)
 @Controller('bookings')
@@ -34,7 +35,14 @@ export class BookingsController {
         'Akun pemilik properti tidak dapat melakukan booking atau pengajuan survei.',
       );
     }
-    return this.bookingsService.create({ ...dto, userId: req.user.userId });
+    return this.bookingsService.create({
+      ...dto,
+      tenantPhone: normalizeIndonesianPhoneOrThrow(
+        dto.tenantPhone,
+        'Nomor HP / WhatsApp',
+      ),
+      userId: req.user.userId,
+    });
   }
 
   @Get('loyalty/me')
@@ -56,7 +64,10 @@ export class BookingsController {
       userId: req.user.userId,
       kostId: body.kostId,
       tenantName: body.tenantName.trim(),
-      tenantPhone: body.tenantPhone.trim(),
+      tenantPhone: normalizeIndonesianPhoneOrThrow(
+        body.tenantPhone,
+        'Nomor HP / WhatsApp',
+      ),
       startDate: body.startDate.trim(),
       durationCount: body.durationCount,
       notes: body.notes,
