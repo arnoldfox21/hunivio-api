@@ -69,6 +69,7 @@ export class MailService {
 
     const rendered = renderKeylokaEmail({
       ...input,
+      frontendUrl: this.frontendUrl,
       ctaUrl: input.ctaUrl
         ? /^https?:\/\//i.test(input.ctaUrl)
           ? input.ctaUrl
