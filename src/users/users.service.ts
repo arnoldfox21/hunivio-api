@@ -385,6 +385,31 @@ export class UsersService implements OnModuleInit {
     }
 
     const saved = await this.userRepository.save(user);
+    if (isNewUser && saved.email) {
+      void this.mailService?.sendEmail(saved.email, {
+        subject: `Selamat Datang di Keyloka, ${saved.name}!`,
+        preheader:
+          'Akun Keyloka Anda berhasil dibuat. Lengkapi profil dan mulai cari atau kelola hunian dengan aman.',
+        badgeText: 'Selamat Datang',
+        badgeTone: 'emerald',
+        title: 'Selamat Datang di Keyloka!',
+        greetingName: saved.name,
+        intro:
+          'Terima kasih telah bergabung dengan Keyloka — platform pencarian kost, kontrakan, apartemen, dan hunian harian yang aman dengan perlindungan Escrow.',
+        details: [
+          { label: 'Email Terdaftar', value: saved.email },
+          { label: 'Metode Masuk', value: 'Google Sign-In' },
+          {
+            label: 'Langkah Berikutnya',
+            value: 'Lengkapi profil & pilih peran (Penyewa / Pemilik Properti)',
+          },
+        ],
+        ctaLabel: 'Lengkapi Profil & Mulai',
+        ctaUrl: '/onboarding',
+        outroNote:
+          'Sebagai Pemilik Properti, Anda dapat langsung mengaktifkan mode pemilik dan memasang iklan hunian pertama Anda secara gratis (kuota awal 2 properti).',
+      });
+    }
     const accessToken = signAuthToken({
       userId: saved.id,
       role: saved.role,
