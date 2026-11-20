@@ -64,6 +64,9 @@ export class WalletService {
     const isProd = process.env.MIDTRANS_IS_PRODUCTION === 'true';
     const serverKey = (process.env.MIDTRANS_SERVER_KEY || '').trim();
     const clientKey = (process.env.MIDTRANS_CLIENT_KEY || '').trim();
+    const signatureKey = (
+      process.env.MIDTRANS_SIGNATURE_KEY || serverKey
+    ).trim();
     if (!serverKey) {
       throw new InternalServerErrorException(
         'Konfigurasi Midtrans Server Key belum tersedia.',
@@ -73,6 +76,7 @@ export class WalletService {
       isProd,
       serverKey,
       clientKey,
+      signatureKey,
       snapUrl: isProd
         ? 'https://app.midtrans.com/snap/v1/transactions'
         : 'https://app.sandbox.midtrans.com/snap/v1/transactions',
@@ -601,13 +605,21 @@ export class WalletService {
       throw new BadRequestException('Payload webhook Midtrans tidak lengkap.');
     }
 
-    const { serverKey } = this.midtransConfig;
+    const { signatureKey: webhookSecretKey } = this.midtransConfig;
     const expectedSignature = crypto
       .createHash('sha512')
-      .update(`${orderId}${statusCode}${grossAmount}${serverKey}`)
+      .update(`${orderId}${statusCode}${grossAmount}${webhookSecretKey}`)
       .digest('hex');
 
-    if (expectedSignature !== signatureKey) {
+    const normalizedSignature = signatureKey.trim().toLowerCase();
+    const isValidSignature =
+      expectedSignature.length === normalizedSignature.length &&
+      crypto.timingSafeEqual(
+        Buffer.from(expectedSignature, 'utf8'),
+        Buffer.from(normalizedSignature, 'utf8'),
+      );
+
+    if (!isValidSignature) {
       throw new UnauthorizedException('Signature webhook Midtrans tidak valid.');
     }
 
