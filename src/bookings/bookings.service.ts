@@ -22,6 +22,7 @@ import { KostsService } from '../kosts/kosts.service';
 import { ChatsService } from '../chats/chats.service';
 import { ChatsGateway } from '../chats/chats.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
 
 export const BOOKING_PLATFORM_FEE_PERCENT = 1;
 export const POINT_RUPIAH_VALUE = 50; // 1 poin = Rp50
@@ -44,6 +45,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     private readonly chatsGateway: ChatsGateway,
     private readonly dataSource: DataSource,
     @Optional() private readonly notificationsService?: NotificationsService,
+    @Optional() private readonly mailService?: MailService,
   ) {}
 
   onModuleInit() {
@@ -215,6 +217,36 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           targetUrl: '/bookings',
         })
         .catch(() => undefined);
+
+      void this.userRepository
+        .findOne({ where: { id: kost.ownerId } })
+        .then((owner) => {
+          if (owner?.email) {
+            return this.mailService?.sendEmail(owner.email, {
+              subject: `[Keyloka] Pengajuan Survei Baru • ${kost.name}`,
+              badgeText: 'Survei Baru',
+              badgeTone: 'blue',
+              title: 'Ada Pengajuan Survei Baru',
+              greetingName: owner.name,
+              intro:
+                'Calon penyewa mengajukan jadwal survei / menanyakan ketersediaan kamar untuk properti Anda.',
+              details: [
+                { label: 'Properti', value: kost.name },
+                { label: 'Calon Penyewa', value: dto.tenantName },
+                {
+                  label: 'Rencana Tanggal',
+                  value: dto.surveyDateTime || dto.startDate,
+                },
+                ...(dto.notes?.trim()
+                  ? [{ label: 'Catatan', value: dto.notes.trim() }]
+                  : []),
+              ],
+              ctaLabel: 'Tinjau di Dashboard',
+              ctaUrl: '/bookings',
+            });
+          }
+        })
+        .catch(() => undefined);
     }
 
     return this.bookingRepository.findOneOrFail({ where: { id: saved.id } });
@@ -369,6 +401,39 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
             targetUrl: '/bookings',
           })
           .catch(() => undefined);
+
+        if (
+          nextStatus === 'DISETUJUI' ||
+          nextStatus === 'APPROVED' ||
+          nextStatus === 'DITOLAK'
+        ) {
+          const isApproved =
+            nextStatus === 'DISETUJUI' || nextStatus === 'APPROVED';
+          void this.userRepository
+            .findOne({ where: { id: booking.userId } })
+            .then((tenant) => {
+              if (tenant?.email) {
+                return this.mailService?.sendEmail(tenant.email, {
+                  subject: `[Keyloka] Pengajuan ${jenis === 'survei' ? 'Survei' : 'Booking'} ${isApproved ? 'Disetujui' : 'Ditolak'} • ${kost.name}`,
+                  badgeText: isApproved ? 'Disetujui' : 'Ditolak',
+                  badgeTone: isApproved ? 'emerald' : 'red',
+                  title: `Status ${jenis === 'survei' ? 'Survei' : 'Booking'} Diperbarui`,
+                  greetingName: tenant.name,
+                  intro: notifText,
+                  details: [
+                    { label: 'Properti', value: kost.name },
+                    {
+                      label: 'Tanggal',
+                      value: booking.surveyDateTime || booking.startDate,
+                    },
+                  ],
+                  ctaLabel: 'Lihat Detail Booking',
+                  ctaUrl: '/bookings',
+                });
+              }
+            })
+            .catch(() => undefined);
+        }
       }
     }
 
@@ -834,6 +899,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           'Nominal pembayaran Midtrans tidak sesuai dengan tagihan booking.',
         );
       }
+      let transitionedToPaid = false;
       const updated = await this.dataSource.transaction(async (manager) => {
         const bookingRepo = manager.getRepository(Booking);
         const kostRepo = manager.getRepository(Kost);
@@ -849,6 +915,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         if (lockedBooking.paymentStatus === 'PAID') {
           return lockedBooking;
         }
+        transitionedToPaid = true;
 
         const lockedKost = await kostRepo.findOne({
           where: { id: lockedBooking.kostId },
@@ -866,6 +933,9 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       });
 
       const kost = await this.kostsService.findOne(updated.kostId);
+      if (transitionedToPaid) {
+        void this._sendDirectBookingPaidEmails(updated, kost);
+      }
       if (kost.ownerId && updated.userId && kost.ownerId !== updated.userId) {
         try {
           const autoChat = await this.chatsService.createMessage({
@@ -936,6 +1006,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           'Nominal webhook Midtrans tidak sesuai dengan tagihan booking.',
         );
       }
+      let transitionedToPaid = false;
       const updated = await this.dataSource.transaction(async (manager) => {
         const bookingRepo = manager.getRepository(Booking);
         const kostRepo = manager.getRepository(Kost);
@@ -951,6 +1022,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         if (lockedBooking.paymentStatus === 'PAID') {
           return lockedBooking;
         }
+        transitionedToPaid = true;
 
         const lockedKost = await kostRepo.findOne({
           where: { id: lockedBooking.kostId },
@@ -968,6 +1040,9 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       });
 
       const kost = await this.kostsService.findOne(updated.kostId);
+      if (transitionedToPaid) {
+        void this._sendDirectBookingPaidEmails(updated, kost);
+      }
       if (kost.ownerId && updated.userId && kost.ownerId !== updated.userId) {
         try {
           const autoChat = await this.chatsService.createMessage({
@@ -1007,7 +1082,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async confirmCheckIn(bookingId: number, requesterId: number): Promise<Booking> {
-    return this.dataSource.transaction(async (manager) => {
+    let ownerEmail = '';
+    let ownerName = '';
+    let kostName = '';
+    const saved = await this.dataSource.transaction(async (manager) => {
       const bookingRepo = manager.getRepository(Booking);
       const kostRepo = manager.getRepository(Kost);
       const userRepo = manager.getRepository(User);
@@ -1035,12 +1113,15 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       if (!kost) {
         throw new NotFoundException('Properti tidak ditemukan.');
       }
+      kostName = kost.name;
 
       const owner = await userRepo.findOne({
         where: { id: kost.ownerId },
         lock: { mode: 'pessimistic_write' },
       });
       if (owner) {
+        ownerEmail = owner.email || '';
+        ownerName = owner.name || '';
         owner.payoutBalance =
           Number(owner.payoutBalance ?? 0) + Number(booking.ownerNetAmount ?? 0);
         await userRepo.save(owner);
@@ -1054,6 +1135,28 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       booking.pointsEarned = earned;
       return bookingRepo.save(booking);
     });
+
+    if (ownerEmail) {
+      const netStr = Number(saved.ownerNetAmount ?? 0).toLocaleString('id-ID');
+      void this.mailService?.sendEmail(ownerEmail, {
+        subject: `[Keyloka] Dana Escrow Rp${netStr} Diteruskan • ${kostName}`,
+        badgeText: 'Escrow Cair',
+        badgeTone: 'emerald',
+        title: 'Penyewa Check-In — Dana Escrow Diteruskan',
+        greetingName: ownerName,
+        intro:
+          'Penyewa telah mengonfirmasi check-in. Dana bersih sewa kini sudah masuk ke saldo penghasilan Anda dan siap ditarik.',
+        details: [
+          { label: 'Properti', value: kostName },
+          { label: 'Penyewa', value: saved.tenantName },
+          { label: 'Dana Diteruskan', value: `Rp${netStr}` },
+        ],
+        ctaLabel: 'Buka Dompet Penghasilan',
+        ctaUrl: '/dashboard?tab=WALLET',
+      });
+    }
+
+    return saved;
   }
 
   async reportDispute(
@@ -1186,6 +1289,63 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       currentMin: 0,
       nextTarget: 100,
     };
+  }
+
+  private async _sendDirectBookingPaidEmails(booking: Booking, kost: Kost) {
+    const paidStr = Number(booking.paidAmount ?? 0).toLocaleString('id-ID');
+    const unitLabel = booking.durationUnit === 'DAY' ? 'hari' : 'bulan';
+    const durationStr = `${booking.durationCount} ${unitLabel}`;
+
+    const [tenant, owner] = await Promise.all([
+      booking.userId
+        ? this.userRepository.findOne({ where: { id: booking.userId } })
+        : Promise.resolve(null),
+      kost.ownerId
+        ? this.userRepository.findOne({ where: { id: kost.ownerId } })
+        : Promise.resolve(null),
+    ]);
+
+    if (tenant?.email) {
+      await this.mailService?.sendEmail(tenant.email, {
+        subject: `[Keyloka] Pembayaran Booking ${kost.name} Berhasil`,
+        badgeText: 'Pembayaran Berhasil',
+        badgeTone: 'emerald',
+        title: 'Pembayaran Booking Anda Berhasil',
+        greetingName: tenant.name || booking.tenantName,
+        intro:
+          'Pembayaran Anda telah kami terima. Dana Anda ditahan aman di Escrow Keyloka hingga Anda mengonfirmasi Check-In di lokasi.',
+        details: [
+          { label: 'Kode Order', value: booking.paymentOrderId || `#${booking.id}` },
+          { label: 'Properti', value: kost.name },
+          { label: 'Tanggal Masuk', value: booking.startDate },
+          { label: 'Durasi', value: durationStr },
+          { label: 'Total Dibayar', value: `Rp${paidStr}` },
+        ],
+        ctaLabel: 'Lihat Booking & Konfirmasi Check-In',
+        ctaUrl: '/bookings',
+      });
+    }
+
+    if (owner?.email && owner.id !== tenant?.id) {
+      await this.mailService?.sendEmail(owner.email, {
+        subject: `[Keyloka] Booking Baru Dibayar • ${kost.name}`,
+        badgeText: 'Booking Dibayar',
+        badgeTone: 'emerald',
+        title: 'Ada Booking Baru yang Sudah Dibayar',
+        greetingName: owner.name,
+        intro:
+          'Penyewa telah menyelesaikan pembayaran. Dana ditahan aman di Escrow dan akan diteruskan ke saldo penghasilan Anda setelah penyewa check-in.',
+        details: [
+          { label: 'Properti', value: kost.name },
+          { label: 'Penyewa', value: booking.tenantName },
+          { label: 'Tanggal Masuk', value: booking.startDate },
+          { label: 'Durasi', value: durationStr },
+          { label: 'Total Dibayar Penyewa', value: `Rp${paidStr}` },
+        ],
+        ctaLabel: 'Kelola Booking di Dashboard',
+        ctaUrl: '/dashboard',
+      });
+    }
   }
 
   private async _awardBookingPoints(

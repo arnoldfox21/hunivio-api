@@ -5,6 +5,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  Optional,
   UnauthorizedException,
   forwardRef,
 } from '@nestjs/common';
@@ -18,6 +19,7 @@ import { Kost } from '../kosts/entities/kost.entity';
 import { CreateTopupDto } from './dto/create-topup.dto';
 import { BookingsService } from '../bookings/bookings.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
 
 export const FREE_PROPERTY_QUOTA = 2;
 export const EXTRA_PROPERTY_SLOT_FEE = 10000;
@@ -55,6 +57,7 @@ export class WalletService {
     @Inject(forwardRef(() => BookingsService))
     private readonly bookingsService: BookingsService,
     private readonly notificationsService: NotificationsService,
+    @Optional() private readonly mailService?: MailService,
   ) {}
 
   private get midtransConfig() {
@@ -473,6 +476,27 @@ export class WalletService {
           targetUrl: '/dashboard?tab=WALLET',
         })
         .catch(() => null);
+      const user = await this.userRepo.findOne({
+        where: { id: result.transaction.userId },
+      });
+      if (user?.email) {
+        void this.mailService?.sendEmail(user.email, {
+          subject: `[Keyloka] Top-Up Saldo Kredit Rp${amtStr} Berhasil`,
+          badgeText: 'Top-Up Berhasil',
+          badgeTone: 'emerald',
+          title: 'Top-Up Saldo Kredit Berhasil',
+          greetingName: user.name,
+          intro:
+            'Pembayaran top-up saldo kredit iklan Anda telah kami terima dan saldo Anda langsung diperbarui.',
+          details: [
+            { label: 'Order ID', value: result.transaction.orderId },
+            { label: 'Nominal Top-Up', value: `Rp${amtStr}` },
+            { label: 'Saldo Kredit Terbaru', value: `Rp${balStr}` },
+          ],
+          ctaLabel: 'Buka Dompet & Saldo',
+          ctaUrl: '/dashboard?tab=WALLET',
+        });
+      }
     } else if (statusChangedTo === 'FAILED' || statusChangedTo === 'EXPIRED') {
       const amtStr = Number(result.transaction.amount).toLocaleString('id-ID');
       await this.notificationsService
@@ -751,7 +775,7 @@ export class WalletService {
       throw new BadRequestException('Aksi harus APPROVE atau REJECT.');
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const saved = await this.dataSource.transaction(async (manager) => {
       const payoutRepo = manager.getRepository(PayoutRequest);
       const userRepo = manager.getRepository(User);
 
@@ -813,5 +837,39 @@ export class WalletService {
       req.processedAt = new Date();
       return payoutRepo.save(req);
     });
+
+    const owner = await this.userRepo.findOne({ where: { id: saved.userId } });
+    if (owner?.email) {
+      const amtStr = Number(saved.amount).toLocaleString('id-ID');
+      const isApproved = saved.status === 'APPROVED';
+      void this.mailService?.sendEmail(owner.email, {
+        subject: isApproved
+          ? `[Keyloka] Penarikan Dana Rp${amtStr} Disetujui`
+          : `[Keyloka] Penarikan Dana Rp${amtStr} Ditolak`,
+        badgeText: isApproved ? 'Withdraw Disetujui' : 'Withdraw Ditolak',
+        badgeTone: isApproved ? 'emerald' : 'red',
+        title: isApproved
+          ? 'Penarikan Dana Disetujui'
+          : 'Penarikan Dana Ditolak',
+        greetingName: owner.name,
+        intro: isApproved
+          ? 'Pengajuan penarikan dana penghasilan Anda telah disetujui dan diproses oleh tim Keyloka.'
+          : 'Pengajuan penarikan dana Anda belum dapat disetujui dan saldo telah dikembalikan ke dompet penghasilan Anda.',
+        details: [
+          { label: 'Nominal', value: `Rp${amtStr}` },
+          {
+            label: 'Tujuan',
+            value: `${saved.bankName} - ${saved.accountNumber} (${saved.accountHolder})`,
+          },
+          ...(saved.adminNote
+            ? [{ label: 'Catatan Admin', value: saved.adminNote }]
+            : []),
+        ],
+        ctaLabel: 'Lihat Riwayat Penarikan',
+        ctaUrl: '/dashboard?tab=WALLET',
+      });
+    }
+
+    return saved;
   }
 }

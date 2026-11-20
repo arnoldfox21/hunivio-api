@@ -20,6 +20,7 @@ import { FirebaseNotificationService } from '../chats/firebase-notification.serv
 import { NotificationsService } from '../notifications/notifications.service';
 import { toTitleCaseRegion } from '../common/region-format.util';
 import { StorageService } from '../storage/storage.service';
+import { MailService } from '../mail/mail.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const sharp = require('sharp') as typeof import('sharp').default;
 import {
@@ -46,6 +47,7 @@ export class KostsService implements OnModuleInit {
     private readonly dataSource: DataSource,
     private readonly storageService: StorageService,
     @Optional() private readonly notificationsService?: NotificationsService,
+    @Optional() private readonly mailService?: MailService,
   ) {}
 
   async onModuleInit() {
@@ -1092,6 +1094,35 @@ export class KostsService implements OnModuleInit {
             receiverId: String(kost.ownerId),
           },
         });
+        if (owner?.email) {
+          void this.mailService?.sendEmail(owner.email, {
+            subject:
+              normalized === 'APPROVED'
+                ? `[Keyloka] Properti "${kost.name}" Disetujui`
+                : `[Keyloka] Properti "${kost.name}" Memerlukan Perbaikan`,
+            badgeText:
+              normalized === 'APPROVED'
+                ? 'Properti Disetujui'
+                : 'Perlu Perbaikan',
+            badgeTone: normalized === 'APPROVED' ? 'emerald' : 'amber',
+            title,
+            greetingName: owner.name,
+            intro: body,
+            details: [
+              { label: 'Nama Properti', value: kost.name },
+              { label: 'Lokasi', value: `${kost.district}, ${kost.city}` },
+              ...(kost.rejectionReason
+                ? [{ label: 'Catatan Staff', value: kost.rejectionReason }]
+                : []),
+            ],
+            ctaLabel:
+              normalized === 'APPROVED'
+                ? 'Lihat Halaman Properti'
+                : 'Perbaiki di Dashboard',
+            ctaUrl:
+              normalized === 'APPROVED' ? `/kost/${kost.id}` : '/dashboard',
+          });
+        }
       } catch {
         // Abaikan jika push gagal
       }

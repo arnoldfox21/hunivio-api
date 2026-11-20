@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -43,6 +44,7 @@ import {
   normalizeUsernameOrThrow,
 } from '../common/validation.util';
 import { StorageService } from '../storage/storage.service';
+import { MailService } from '../mail/mail.service';
 
 export const GOOGLE_OAUTH_CONFIG = {
   clientId:
@@ -61,6 +63,7 @@ export class UsersService implements OnModuleInit {
     @InjectRepository(Kost)
     private readonly kostRepository: Repository<Kost>,
     private readonly storageService: StorageService,
+    @Optional() private readonly mailService?: MailService,
   ) {}
 
   async onModuleInit() {
@@ -873,7 +876,29 @@ export class UsersService implements OnModuleInit {
       user.verificationStatus = 'REJECTED';
       user.verificationKostId = null;
       user.verificationRejectionReason = (params.rejectionReason || '').trim();
-      return this.userRepository.save(user);
+      const savedRejected = await this.userRepository.save(user);
+      if (savedRejected.email) {
+        void this.mailService?.sendEmail(savedRejected.email, {
+          subject: '[Keyloka] Pengajuan Verifikasi / Klaim Ditolak',
+          badgeText: 'Verifikasi Ditolak',
+          badgeTone: 'red',
+          title: 'Pengajuan Verifikasi Belum Disetujui',
+          greetingName: savedRejected.name,
+          intro:
+            'Mohon maaf, pengajuan verifikasi akun atau klaim properti Anda belum dapat disetujui oleh tim kami.',
+          details: savedRejected.verificationRejectionReason
+            ? [
+                {
+                  label: 'Alasan Penolakan',
+                  value: savedRejected.verificationRejectionReason,
+                },
+              ]
+            : undefined,
+          ctaLabel: 'Periksa Profil Anda',
+          ctaUrl: '/profile',
+        });
+      }
+      return savedRejected;
     }
     const verified =
       params.isVerified !== undefined
