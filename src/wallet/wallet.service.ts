@@ -850,10 +850,24 @@ export class WalletService {
       return payoutRepo.save(req);
     });
 
+    const amtStr = Number(saved.amount).toLocaleString('id-ID');
+    const isApproved = saved.status === 'APPROVED';
+    await this.notificationsService
+      .create({
+        userId: saved.userId,
+        type: 'WALLET',
+        title: isApproved
+          ? 'Penarikan Dana Disetujui'
+          : 'Penarikan Dana Ditolak',
+        body: isApproved
+          ? `Pengajuan penarikan dana sebesar Rp${amtStr} ke ${saved.bankName} (${saved.accountNumber}) telah disetujui.`
+          : `Pengajuan penarikan dana sebesar Rp${amtStr} ditolak dan saldo telah dikembalikan ke dompet penghasilan Anda.`,
+        targetUrl: '/dashboard?tab=WALLET',
+      })
+      .catch(() => null);
+
     const owner = await this.userRepo.findOne({ where: { id: saved.userId } });
     if (owner?.email) {
-      const amtStr = Number(saved.amount).toLocaleString('id-ID');
-      const isApproved = saved.status === 'APPROVED';
       void this.mailService?.sendEmail(owner.email, {
         subject: isApproved
           ? `[Keyloka] Penarikan Dana Rp${amtStr} Disetujui`

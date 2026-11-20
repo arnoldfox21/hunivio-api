@@ -1072,7 +1072,16 @@ export class KostsService implements OnModuleInit {
         const owner = await this.userRepository.findOne({
           where: { id: kost.ownerId },
         });
-        const token = owner?.fcmToken?.trim();
+        const ownerTokens = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(owner?.fcmTokens) ? owner.fcmTokens : []),
+              owner?.fcmToken || '',
+            ]
+              .map((t) => t.trim())
+              .filter(Boolean),
+          ),
+        );
         const title =
           normalized === 'APPROVED'
             ? 'Properti Disetujui'
@@ -1082,7 +1091,7 @@ export class KostsService implements OnModuleInit {
             ? `${kost.name} telah disetujui dan kini tampil di pencarian Keyloka.`
             : `${kost.name} perlu diperbaiki${kost.rejectionReason ? `: ${kost.rejectionReason}` : '.'}`;
         await this.firebaseNotificationService.sendGeneralNotification({
-          token: token || '',
+          tokens: ownerTokens,
           title,
           body,
           userId: kost.ownerId,

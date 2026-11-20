@@ -40,6 +40,10 @@ export class CreateBookingDto {
 
   @IsOptional()
   @IsString()
+  surveyTime?: string;
+
+  @IsOptional()
+  @IsString()
   notes?: string;
 }
 
@@ -59,6 +63,14 @@ export class CreateDirectBookingDto {
   @IsString()
   @IsNotEmpty()
   startDate: string;
+
+  @IsOptional()
+  @IsString()
+  checkInTime?: string;
+
+  @IsOptional()
+  @IsString()
+  surveyDateTime?: string;
 
   @IsInt()
   @Min(1)

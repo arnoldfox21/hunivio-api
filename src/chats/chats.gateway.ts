@@ -199,12 +199,12 @@ export class ChatsGateway implements OnGatewayConnection {
     this.server.to(`user_${saved.senderId}`).emit('inboxUpdated', inboxPayload);
     this.server.to(`user_${saved.receiverId}`).emit('inboxUpdated', inboxPayload);
 
-    // Kirim FCM push notification ke HP penerima
+    // Kirim FCM push notification ke semua device penerima
     try {
-      const fcmToken = await this.usersService.getFcmToken(saved.receiverId);
-      if (fcmToken) {
+      const fcmTokens = await this.usersService.getFcmTokens(saved.receiverId);
+      if (fcmTokens.length > 0) {
         await this.firebaseNotificationService.sendChatNotification({
-          token: fcmToken,
+          tokens: fcmTokens,
           title: latest.senderName || 'Pesan Baru di Keyloka',
           body: latest.message,
           kostId: latest.kostId,
@@ -285,10 +285,10 @@ export class ChatsGateway implements OnGatewayConnection {
           message: saved.message,
           messageId: saved.id,
         });
-        const token = await this.usersService.getFcmToken(m.userId);
-        if (token) {
+        const tokens = await this.usersService.getFcmTokens(m.userId);
+        if (tokens.length > 0) {
           await this.firebaseNotificationService.sendChatNotification({
-            token,
+            tokens,
             title: `Grup Penghuni • ${saved.senderName}`,
             body: saved.message,
             kostId: saved.kostId,

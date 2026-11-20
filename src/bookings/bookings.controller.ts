@@ -69,6 +69,8 @@ export class BookingsController {
         'Nomor HP / WhatsApp',
       ),
       startDate: body.startDate.trim(),
+      checkInTime: body.checkInTime?.trim(),
+      surveyDateTime: body.surveyDateTime?.trim(),
       durationCount: body.durationCount,
       notes: body.notes,
       usePoints: Boolean(body.usePoints),

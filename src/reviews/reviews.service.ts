@@ -135,9 +135,9 @@ export class ReviewsService {
 
     try {
       if (kost.ownerId && kost.ownerId !== saved.userId) {
-        const token = await this.usersService.getFcmToken(kost.ownerId);
+        const tokens = await this.usersService.getFcmTokens(kost.ownerId);
         await this.firebaseNotificationService.sendGeneralNotification({
-          token: token || '',
+          tokens,
           title: `Ulasan Baru • ${kost.name}`,
           body: `${saved.userName} memberi rating ${saved.overallRating}★: "${saved.comment}"`,
           userId: kost.ownerId,
@@ -193,9 +193,9 @@ export class ReviewsService {
 
     try {
       if (review.userId && review.userId !== requesterId) {
-        const token = await this.usersService.getFcmToken(review.userId);
+        const tokens = await this.usersService.getFcmTokens(review.userId);
         await this.firebaseNotificationService.sendGeneralNotification({
-          token: token || '',
+          tokens,
           title: `Balasan Pemilik • ${kost.name}`,
           body: trimmed,
           userId: review.userId,

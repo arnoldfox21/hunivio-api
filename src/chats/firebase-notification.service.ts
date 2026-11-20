@@ -46,8 +46,22 @@ export class FirebaseNotificationService {
     }
   }
 
+  private _collectTargetTokens(token?: string, tokens?: string[]): string[] {
+    const set = new Set<string>();
+    if (Array.isArray(tokens)) {
+      for (const t of tokens) {
+        const trimmed = (t || '').trim();
+        if (trimmed) set.add(trimmed);
+      }
+    }
+    const single = (token || '').trim();
+    if (single) set.add(single);
+    return Array.from(set);
+  }
+
   async sendChatNotification(params: {
-    token: string;
+    token?: string;
+    tokens?: string[];
     title: string;
     body: string;
     kostId: number;
@@ -56,43 +70,50 @@ export class FirebaseNotificationService {
     senderName: string;
     messageId: number;
   }): Promise<void> {
-    if (!this.initialized || !params.token) return;
+    const targetTokens = this._collectTargetTokens(params.token, params.tokens);
+    if (!this.initialized || targetTokens.length === 0) return;
 
-    try {
-      await getMessaging().send({
-        token: params.token,
-        notification: {
-          title: params.title,
-          body: params.body,
-        },
-        data: {
-          type: 'chat',
-          kostId: String(params.kostId),
-          senderId: String(params.senderId),
-          receiverId: String(params.receiverId),
-          senderName: params.senderName,
-          messageId: String(params.messageId),
-        },
-        android: {
-          priority: 'high',
+    const results = await Promise.allSettled(
+      targetTokens.map((token) =>
+        getMessaging().send({
+          token,
           notification: {
-            channelId: 'keyloka_chat_channel',
-            sound: 'default',
-            defaultSound: true,
-            visibility: 'public',
-            priority: 'high',
+            title: params.title,
+            body: params.body,
           },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Gagal mengirim push notification FCM: ${(err as Error)?.message || err}`,
-      );
+          data: {
+            type: 'chat',
+            kostId: String(params.kostId),
+            senderId: String(params.senderId),
+            receiverId: String(params.receiverId),
+            senderName: params.senderName,
+            messageId: String(params.messageId),
+          },
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'keyloka_chat_channel',
+              sound: 'default',
+              defaultSound: true,
+              visibility: 'public',
+              priority: 'high',
+            },
+          },
+        }),
+      ),
+    );
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        this.logger.warn(
+          `Gagal mengirim push notification FCM: ${(r.reason as Error)?.message || r.reason}`,
+        );
+      }
     }
   }
 
   async sendGeneralNotification(params: {
-    token: string;
+    token?: string;
+    tokens?: string[];
     title: string;
     body: string;
     data?: Record<string, string>;
@@ -112,34 +133,40 @@ export class FirebaseNotificationService {
         .catch(() => undefined);
     }
 
-    if (!this.initialized || !params.token) return;
+    const targetTokens = this._collectTargetTokens(params.token, params.tokens);
+    if (!this.initialized || targetTokens.length === 0) return;
 
-    try {
-      await getMessaging().send({
-        token: params.token,
-        notification: {
-          title: params.title,
-          body: params.body,
-        },
-        data: {
-          type: 'general',
-          ...(params.data || {}),
-        },
-        android: {
-          priority: 'high',
+    const results = await Promise.allSettled(
+      targetTokens.map((token) =>
+        getMessaging().send({
+          token,
           notification: {
-            channelId: 'keyloka_chat_channel',
-            sound: 'default',
-            defaultSound: true,
-            visibility: 'public',
-            priority: 'high',
+            title: params.title,
+            body: params.body,
           },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Gagal mengirim notifikasi umum FCM: ${(err as Error)?.message || err}`,
-      );
+          data: {
+            type: 'general',
+            ...(params.data || {}),
+          },
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'keyloka_chat_channel',
+              sound: 'default',
+              defaultSound: true,
+              visibility: 'public',
+              priority: 'high',
+            },
+          },
+        }),
+      ),
+    );
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        this.logger.warn(
+          `Gagal mengirim notifikasi umum FCM: ${(r.reason as Error)?.message || r.reason}`,
+        );
+      }
     }
   }
 }

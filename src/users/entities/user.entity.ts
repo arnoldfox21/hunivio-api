@@ -83,6 +83,9 @@ export class User {
   @Column({ type: 'text', default: '' })
   fcmToken: string;
 
+  @Column({ type: 'jsonb', default: [] })
+  fcmTokens: string[];
+
   @Column({ type: 'int', default: 0 })
   creditBalance: number;
 
