@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -36,14 +37,17 @@ export class CreateBookingDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   surveyDateTime?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(32)
   surveyTime?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   notes?: string;
 }
 
@@ -54,22 +58,27 @@ export class CreateDirectBookingDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(120)
   tenantName: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(32)
   tenantPhone: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(32)
   startDate: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(32)
   checkInTime?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   surveyDateTime?: string;
 
   @IsInt()

@@ -121,7 +121,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       if (!isDue) continue;
 
       try {
-        await this.dataSource.transaction(async (manager) => {
+        const releasedInfo = await this.dataSource.transaction(async (manager) => {
           const bookingRepo = manager.getRepository(Booking);
           const kostRepo = manager.getRepository(Kost);
           const userRepo = manager.getRepository(User);
@@ -131,7 +131,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
             lock: { mode: 'pessimistic_write' },
             loadEagerRelations: false,
           });
-          if (!locked || locked.escrowStatus !== 'HELD') return;
+          if (!locked || locked.escrowStatus !== 'HELD') return null;
 
           const kost = await kostRepo.findOne({
             where: { id: locked.kostId },
@@ -159,23 +159,32 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
             kost?.name || 'Properti Keyloka',
           );
           await bookingRepo.save(locked);
+          return {
+            kostName: kost?.name || 'Properti Keyloka',
+            ownerId: kost?.ownerId ?? locked.ownerId,
+            userId: locked.userId,
+            tenantName: locked.tenantName,
+            ownerNetAmount: locked.ownerNetAmount,
+            pointsEarned: locked.pointsEarned,
+          };
+        });
+        if (releasedInfo) {
           releasedCount += 1;
-
           void this._createNotificationSafe({
-            userId: kost?.ownerId,
+            userId: releasedInfo.ownerId,
             type: 'ESCROW',
-            title: `Dana Escrow Cair • ${kost?.name || 'Properti Keyloka'}`,
-            body: `Dana bersih Rp${Number(locked.ownerNetAmount ?? 0).toLocaleString('id-ID')} dari booking ${locked.tenantName} telah diteruskan otomatis ke saldo Anda.`,
+            title: `Dana Escrow Cair • ${releasedInfo.kostName}`,
+            body: `Dana bersih Rp${Number(releasedInfo.ownerNetAmount ?? 0).toLocaleString('id-ID')} dari booking ${releasedInfo.tenantName} telah diteruskan otomatis ke saldo Anda.`,
             targetUrl: '/dashboard?tab=WALLET',
           });
           void this._createNotificationSafe({
-            userId: locked.userId,
+            userId: releasedInfo.userId,
             type: 'BOOKING',
-            title: `Booking Aktif • ${kost?.name || 'Properti Keyloka'}`,
-            body: `Masa sewa Anda telah aktif dan ${locked.pointsEarned} poin loyalti ditambahkan.`,
+            title: `Booking Aktif • ${releasedInfo.kostName}`,
+            body: `Masa sewa Anda telah aktif dan ${releasedInfo.pointsEarned} poin loyalti ditambahkan.`,
             targetUrl: '/bookings',
           });
-        });
+        }
       } catch {
         // Skip failed item and continue
       }
@@ -421,17 +430,18 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       kost.ownerId !== booking.userId
     ) {
       const jenis = booking.bookingType === 'SURVEI' ? 'survei' : 'sewa';
+      const scheduleLabel = booking.surveyDateTime || booking.startDate;
       let notifText = '';
       if (nextStatus === 'DISETUJUI' || nextStatus === 'APPROVED') {
-        notifText = `Pengajuan ${jenis} Anda untuk ${kost.name} telah DISETUJUI oleh pemilik. Silakan koordinasi langkah selanjutnya melalui chat ini.`;
+        notifText = `Pengajuan ${jenis} Anda untuk ${kost.name} (${scheduleLabel}) telah DISETUJUI oleh pemilik. Silakan koordinasi langkah selanjutnya melalui chat ini.`;
       } else if (nextStatus === 'DITOLAK') {
-        notifText = `Maaf, pengajuan ${jenis} Anda untuk ${kost.name} belum dapat disetujui pemilik.`;
+        notifText = `Maaf, pengajuan ${jenis} Anda untuk ${kost.name} (${scheduleLabel}) belum dapat disetujui pemilik.`;
       } else if (nextStatus === 'AKTIF') {
         notifText = `Status sewa Anda di ${kost.name} kini AKTIF. Selamat menempati properti!`;
       } else if (nextStatus === 'SELESAI') {
         notifText =
           booking.bookingType === 'SURVEI'
-            ? `Jadwal survei Anda di ${kost.name} telah ditandai SELESAI. Terima kasih telah menggunakan Keyloka.`
+            ? `Jadwal survei Anda di ${kost.name} (${scheduleLabel}) telah ditandai SELESAI. Terima kasih telah menggunakan Keyloka.`
             : `Masa sewa Anda di ${kost.name} telah ditandai SELESAI. Terima kasih telah menggunakan Keyloka.`;
       }
       if (notifText) {
@@ -1151,6 +1161,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
   async confirmCheckIn(bookingId: number, requesterId: number): Promise<Booking> {
     let ownerEmail = '';
     let ownerName = '';
+    let ownerId: number | null = null;
     let kostName = '';
     const saved = await this.dataSource.transaction(async (manager) => {
       const bookingRepo = manager.getRepository(Booking);
@@ -1181,6 +1192,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         throw new NotFoundException('Properti tidak ditemukan.');
       }
       kostName = kost.name;
+      ownerId = kost.ownerId;
 
       const owner = await userRepo.findOne({
         where: { id: kost.ownerId },
@@ -1204,9 +1216,8 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     });
 
     const netStr = Number(saved.ownerNetAmount ?? 0).toLocaleString('id-ID');
-    const ownerId = saved.ownerId || (await this.kostsService.findOne(saved.kostId)).ownerId;
     await this._createNotificationSafe({
-      userId: ownerId,
+      userId: ownerId || saved.ownerId,
       type: 'ESCROW',
       title: `Dana Escrow Cair • ${kostName}`,
       body: `${saved.tenantName} telah check-in. Dana bersih Rp${netStr} masuk ke saldo penghasilan Anda.`,
