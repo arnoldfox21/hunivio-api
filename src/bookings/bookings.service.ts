@@ -204,6 +204,17 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         'Anda tidak dapat mengajukan survei pada properti milik sendiri.',
       );
     }
+    if (kost.ownerId) {
+      const owner = await this.userRepository.findOne({
+        where: { id: kost.ownerId },
+      });
+      const ownerRole = (owner?.role || '').toUpperCase();
+      if (ownerRole === 'STAFF' || ownerRole === 'ADMINISTRATOR') {
+        throw new BadRequestException(
+          'Properti ini dikurasi tim Keyloka dan belum diklaim pengelola. Silakan hubungi pengelola langsung melalui WhatsApp.',
+        );
+      }
+    }
     const type = 'SURVEI';
     const isSurvey = true;
 
@@ -659,11 +670,12 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         where: { id: kost.ownerId },
       });
       const ownerRole = (owner?.role || '').toUpperCase();
-      const isOwnerVerified =
-        Boolean(owner?.isVerified) ||
-        ownerRole === 'STAFF' ||
-        ownerRole === 'ADMINISTRATOR';
-      if (!isOwnerVerified) {
+      if (ownerRole === 'STAFF' || ownerRole === 'ADMINISTRATOR') {
+        throw new BadRequestException(
+          'Properti ini belum diklaim oleh pemilik resmi untuk Booking Langsung. Silakan hubungi pengelola melalui WhatsApp.',
+        );
+      }
+      if (!owner?.isVerified) {
         throw new BadRequestException(
           'Pemilik properti belum terverifikasi untuk Booking Langsung. Silakan ajukan survei lokasi.',
         );
