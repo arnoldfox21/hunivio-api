@@ -91,6 +91,15 @@ async function bootstrap() {
       'Terlalu banyak pengiriman laporan. Tunggu 1 menit sebelum mencoba lagi.',
     ),
   );
+  const chatSpamLimiter = createIpRateLimiter(
+    60_000,
+    12,
+    'Terlalu banyak pesan dikirim dalam waktu singkat. Tunggu 1 menit sebelum mengirim lagi.',
+  );
+  const chatSpamPostOnly: express.RequestHandler = (req, res, next) =>
+    req.method === 'POST' ? chatSpamLimiter(req, res, next) : next();
+  app.use('/api/chats', chatSpamPostOnly);
+  app.use('/api/chats/groups/:kostId/messages', chatSpamPostOnly);
   app.use(
     '/api',
     createIpRateLimiter(
