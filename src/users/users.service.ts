@@ -45,6 +45,7 @@ import {
 } from '../common/validation.util';
 import { StorageService } from '../storage/storage.service';
 import { MailService } from '../mail/mail.service';
+import { PlatformService } from '../platform/platform.service';
 
 export const GOOGLE_OAUTH_CONFIG = {
   clientId:
@@ -64,6 +65,7 @@ export class UsersService implements OnModuleInit {
     private readonly kostRepository: Repository<Kost>,
     private readonly storageService: StorageService,
     @Optional() private readonly mailService?: MailService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
 
   async onModuleInit() {
@@ -588,7 +590,15 @@ export class UsersService implements OnModuleInit {
     } else {
       user.roles = [normalizedRole];
     }
-    return this.userRepository.save(user);
+    const saved = await this.userRepository.save(user);
+    void this.platformService?.recordEvent({
+      level: 'INFO',
+      category: 'CONFIG',
+      actorUserId: dto.requesterId ?? null,
+      message: `Role pengguna userId=${id} diubah menjadi ${normalizedRole}`,
+      meta: { targetUserId: id, nextRole: normalizedRole },
+    });
+    return saved;
   }
 
   async completeOnboarding(
@@ -877,7 +887,15 @@ export class UsersService implements OnModuleInit {
       user.fcmToken = '';
       user.fcmTokens = [];
     }
-    return this.userRepository.save(user);
+    const saved = await this.userRepository.save(user);
+    void this.platformService?.recordEvent({
+      level: 'WARN',
+      category: 'AUTH',
+      actorUserId: requesterId,
+      message: `Pengguna userId=${id} ${isBanned ? 'DIBANNED' : 'DI-UNBAN'}`,
+      meta: { targetUserId: id, isBanned },
+    });
+    return saved;
   }
 
   async requestOwnerVerification(

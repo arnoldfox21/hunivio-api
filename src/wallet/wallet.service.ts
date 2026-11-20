@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   Optional,
   UnauthorizedException,
@@ -20,6 +21,7 @@ import { CreateTopupDto } from './dto/create-topup.dto';
 import { BookingsService } from '../bookings/bookings.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../mail/mail.service';
+import { PlatformService } from '../platform/platform.service';
 
 export const FREE_PROPERTY_QUOTA = 2;
 export const EXTRA_PROPERTY_SLOT_FEE = 10000;
@@ -46,6 +48,8 @@ const OWNER_ELIGIBLE_ROLES = new Set([
 
 @Injectable()
 export class WalletService {
+  private readonly logger = new Logger(WalletService.name);
+
   constructor(
     @InjectRepository(WalletTransaction)
     private readonly walletRepo: Repository<WalletTransaction>,
@@ -58,6 +62,7 @@ export class WalletService {
     private readonly bookingsService: BookingsService,
     private readonly notificationsService: NotificationsService,
     @Optional() private readonly mailService?: MailService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
 
   private get midtransConfig() {
@@ -99,11 +104,26 @@ export class WalletService {
     }
   }
 
-  getPricing() {
+  async getPricing() {
+    const cfg = await this.platformService?.getSettings().catch(() => null);
     return {
-      freePropertyQuota: FREE_PROPERTY_QUOTA,
-      extraPropertySlotFee: EXTRA_PROPERTY_SLOT_FEE,
-      boostPackages: Object.values(BOOST_PACKAGES),
+      freePropertyQuota: cfg?.freePropertyQuota ?? FREE_PROPERTY_QUOTA,
+      extraPropertySlotFee: cfg?.extraPropertySlotFee ?? EXTRA_PROPERTY_SLOT_FEE,
+      minWithdrawAmount: cfg?.minWithdrawAmount ?? 10000,
+      boostPackages: [
+        {
+          ...BOOST_PACKAGES.BOOST_3D,
+          price: cfg?.boost3dPrice ?? BOOST_PACKAGES.BOOST_3D.price,
+        },
+        {
+          ...BOOST_PACKAGES.BOOST_7D,
+          price: cfg?.boost7dPrice ?? BOOST_PACKAGES.BOOST_7D.price,
+        },
+        {
+          ...BOOST_PACKAGES.BOOST_14D,
+          price: cfg?.boost14dPrice ?? BOOST_PACKAGES.BOOST_14D.price,
+        },
+      ],
     };
   }
 
@@ -164,10 +184,18 @@ export class WalletService {
   }
 
   async boostKost(userId: number, kostId: number, packageCode: string) {
-    const pkg = BOOST_PACKAGES[(packageCode || '').trim().toUpperCase()];
-    if (!pkg) {
+    const basePkg = BOOST_PACKAGES[(packageCode || '').trim().toUpperCase()];
+    if (!basePkg) {
       throw new BadRequestException('Paket boost iklan tidak valid.');
     }
+    const cfg = await this.platformService?.getSettings().catch(() => null);
+    const dynamicPrice =
+      basePkg.code === 'BOOST_3D'
+        ? (cfg?.boost3dPrice ?? basePkg.price)
+        : basePkg.code === 'BOOST_7D'
+          ? (cfg?.boost7dPrice ?? basePkg.price)
+          : (cfg?.boost14dPrice ?? basePkg.price);
+    const pkg = { ...basePkg, price: dynamicPrice };
 
     return this.dataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(User);
@@ -479,7 +507,12 @@ export class WalletService {
           body: `Top-up saldo kredit sebesar Rp${amtStr} (${result.transaction.orderId}) telah diterima. Saldo kredit Anda sekarang Rp${balStr}.`,
           targetUrl: '/dashboard?tab=WALLET',
         })
-        .catch(() => null);
+        .catch((err) => {
+          this.logger.warn(
+            `Gagal menyimpan notifikasi top-up ${statusChangedTo} userId=${result.transaction.userId}: ${err instanceof Error ? err.message : err}`,
+          );
+          return null;
+        });
       const user = await this.userRepo.findOne({
         where: { id: result.transaction.userId },
       });
@@ -517,7 +550,12 @@ export class WalletService {
               : `Invoice top-up saldo kredit sebesar Rp${amtStr} (${result.transaction.orderId}) telah melewati batas waktu pembayaran.`,
           targetUrl: '/dashboard?tab=WALLET',
         })
-        .catch(() => null);
+        .catch((err) => {
+          this.logger.warn(
+            `Gagal menyimpan notifikasi top-up ${statusChangedTo} userId=${result.transaction.userId}: ${err instanceof Error ? err.message : err}`,
+          );
+          return null;
+        });
     }
 
     return result;
@@ -691,8 +729,12 @@ export class WalletService {
     const accountNumber = (dto.accountNumber || '').trim();
     const accountHolder = (dto.accountHolder || '').trim();
 
-    if (!Number.isFinite(amount) || amount < 10000) {
-      throw new BadRequestException('Minimal penarikan dana adalah Rp10.000.');
+    const cfg = await this.platformService?.getSettings().catch(() => null);
+    const minWithdraw = cfg?.minWithdrawAmount ?? 10000;
+    if (!Number.isFinite(amount) || amount < minWithdraw) {
+      throw new BadRequestException(
+        `Minimal penarikan dana adalah Rp${minWithdraw.toLocaleString('id-ID')}.`,
+      );
     }
     if (!bankName || accountNumber.length < 5 || !accountHolder) {
       throw new BadRequestException(
@@ -852,6 +894,13 @@ export class WalletService {
 
     const amtStr = Number(saved.amount).toLocaleString('id-ID');
     const isApproved = saved.status === 'APPROVED';
+    void this.platformService?.recordEvent({
+      level: 'INFO',
+      category: 'WALLET',
+      actorUserId: saved.userId,
+      message: `Pengajuan withdraw #${saved.id} Rp${amtStr} ${isApproved ? 'DISETUJUI' : 'DITOLAK'}`,
+      meta: { payoutId: saved.id, amount: saved.amount, status: saved.status },
+    });
     await this.notificationsService
       .create({
         userId: saved.userId,
@@ -864,7 +913,12 @@ export class WalletService {
           : `Pengajuan penarikan dana sebesar Rp${amtStr} ditolak dan saldo telah dikembalikan ke dompet penghasilan Anda.`,
         targetUrl: '/dashboard?tab=WALLET',
       })
-      .catch(() => null);
+      .catch((err) => {
+        this.logger.warn(
+          `Gagal menyimpan notifikasi payout #${saved.id} userId=${saved.userId}: ${err instanceof Error ? err.message : err}`,
+        );
+        return null;
+      });
 
     const owner = await this.userRepo.findOne({ where: { id: saved.userId } });
     if (owner?.email) {

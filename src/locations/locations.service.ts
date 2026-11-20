@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Region } from './entities/region.entity';
@@ -8,6 +8,8 @@ import { toTitleCaseRegion } from '../common/region-format.util';
 
 @Injectable()
 export class LocationsService implements OnModuleInit {
+  private readonly logger = new Logger(LocationsService.name);
+
   constructor(
     @InjectRepository(Region)
     private readonly regionRepository: Repository<Region>,
@@ -42,7 +44,9 @@ export class LocationsService implements OnModuleInit {
 
     if (toInsert.length > 0) {
       await this.regionRepository.save(toInsert);
-      console.log(`Seeded ${toInsert.length} Indonesian regions & districts`);
+      this.logger.log(
+        `Seeded ${toInsert.length} Indonesian regions & districts`,
+      );
     }
   }
 

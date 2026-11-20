@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
   Optional,
@@ -21,6 +22,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { toTitleCaseRegion } from '../common/region-format.util';
 import { StorageService } from '../storage/storage.service';
 import { MailService } from '../mail/mail.service';
+import { PlatformService } from '../platform/platform.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const sharp = require('sharp') as typeof import('sharp').default;
 import {
@@ -31,6 +33,8 @@ import {
 
 @Injectable()
 export class KostsService implements OnModuleInit {
+  private readonly logger = new Logger(KostsService.name);
+
   constructor(
     @InjectRepository(Kost)
     private readonly kostRepository: Repository<Kost>,
@@ -48,6 +52,7 @@ export class KostsService implements OnModuleInit {
     private readonly storageService: StorageService,
     @Optional() private readonly notificationsService?: NotificationsService,
     @Optional() private readonly mailService?: MailService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
 
   async onModuleInit() {
@@ -877,14 +882,18 @@ export class KostsService implements OnModuleInit {
       creatorRole === 'ADMINISTRATOR' || creatorRole === 'STAFF';
     const isAutoApproved = isStaffOrAdmin || Boolean(creator?.isVerified);
 
+    const cfg = await this.platformService?.getSettings().catch(() => null);
+    const freeQuota = cfg?.freePropertyQuota ?? FREE_PROPERTY_QUOTA;
+    const slotFee = cfg?.extraPropertySlotFee ?? EXTRA_PROPERTY_SLOT_FEE;
+
     return this.dataSource.transaction(async (manager) => {
       const kostRepo = manager.getRepository(Kost);
       const existingCount = await kostRepo.count({ where: { ownerId } });
 
-      if (!isStaffOrAdmin && existingCount >= FREE_PROPERTY_QUOTA) {
+      if (!isStaffOrAdmin && existingCount >= freeQuota) {
         await this.walletService.deductCredit({
           userId: ownerId,
-          amount: EXTRA_PROPERTY_SLOT_FEE,
+          amount: slotFee,
           type: 'SLOT_FEE',
           description: `Aktivasi Slot Properti ke-${existingCount + 1} — ${dto.name}`,
           manager,
@@ -1311,9 +1320,8 @@ export class KostsService implements OnModuleInit {
         .toBuffer();
       outputExt = 'webp';
     } catch (err) {
-      console.warn(
-        `[upload-image] sharp gagal memproses gambar, fallback ke file asli (${fallbackExt}):`,
-        err instanceof Error ? err.message : err,
+      this.logger.warn(
+        `[upload-image] sharp gagal memproses gambar, fallback ke file asli (${fallbackExt}): ${err instanceof Error ? err.message : err}`,
       );
       outputBuffer = buffer;
       outputExt = fallbackExt;

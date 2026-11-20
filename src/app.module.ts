@@ -1,6 +1,8 @@
+import * as crypto from 'crypto';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { LoggerModule } from 'nestjs-pino';
 import { Kost } from './kosts/entities/kost.entity';
 import { KostReport } from './kosts/entities/kost-report.entity';
 import { Facility } from './kosts/entities/facility.entity';
@@ -22,6 +24,8 @@ import { PayoutRequest } from './wallet/entities/payout-request.entity';
 import { Notification } from './notifications/entities/notification.entity';
 import { Article } from './articles/entities/article.entity';
 import { ArticleCategory } from './articles/entities/article-category.entity';
+import { PlatformSetting } from './platform/entities/platform-setting.entity';
+import { PlatformEventLog } from './platform/entities/platform-event-log.entity';
 import { KostsModule } from './kosts/kosts.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { UsersModule } from './users/users.module';
@@ -34,11 +38,64 @@ import { StorageModule } from './storage/storage.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ArticlesModule } from './articles/articles.module';
 import { MailModule } from './mail/mail.module';
+import { PlatformModule } from './platform/platform.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+    }),
+    LoggerModule.forRoot({
+      pinoHttp: {
+        level:
+          process.env.LOG_LEVEL ||
+          (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+        genReqId: (req) => {
+          const existing = req.headers['x-request-id'];
+          return (
+            (Array.isArray(existing) ? existing[0] : existing) ||
+            crypto.randomUUID()
+          );
+        },
+        redact: {
+          paths: [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'res.headers["set-cookie"]',
+            '*.password',
+            '*.passwordHash',
+            '*.token',
+            '*.accessToken',
+            '*.idToken',
+          ],
+          censor: '[REDACTED]',
+        },
+        customLogLevel: (_req, res, err) => {
+          if (err || res.statusCode >= 500) return 'error';
+          if (res.statusCode >= 400) return 'warn';
+          return 'info';
+        },
+        autoLogging: {
+          ignore: (req) =>
+            req.url === '/api/locations/cities' &&
+            !req.headers['x-forwarded-for'],
+        },
+        customProps: (req) => {
+          const user = (req as { user?: { userId?: number; role?: string } })
+            .user;
+          return user?.userId
+            ? { userId: user.userId, userRole: user.role }
+            : {};
+        },
+        ...(process.env.NODE_ENV !== 'production'
+          ? {
+              transport: {
+                target: 'pino-pretty',
+                options: { colorize: true, singleLine: true },
+              },
+            }
+          : {}),
+      },
     }),
     TypeOrmModule.forRoot(
       process.env.DATABASE_URL
@@ -75,6 +132,8 @@ import { MailModule } from './mail/mail.module';
               Notification,
               Article,
               ArticleCategory,
+              PlatformSetting,
+              PlatformEventLog,
             ],
             synchronize:
               process.env.DB_SYNCHRONIZE === 'true' ||
@@ -114,6 +173,8 @@ import { MailModule } from './mail/mail.module';
               Notification,
               Article,
               ArticleCategory,
+              PlatformSetting,
+              PlatformEventLog,
             ],
             synchronize:
               process.env.DB_SYNCHRONIZE === 'true' ||
@@ -137,6 +198,7 @@ import { MailModule } from './mail/mail.module';
     NotificationsModule,
     ArticlesModule,
     MailModule,
+    PlatformModule,
   ],
 })
 export class AppModule {}

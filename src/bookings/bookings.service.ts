@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
@@ -23,6 +24,7 @@ import { ChatsService } from '../chats/chats.service';
 import { ChatsGateway } from '../chats/chats.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../mail/mail.service';
+import { PlatformService } from '../platform/platform.service';
 
 export const BOOKING_PLATFORM_FEE_PERCENT = 1;
 export const POINT_RUPIAH_VALUE = 50; // 1 poin = Rp50
@@ -30,6 +32,7 @@ export const RUPIAH_PER_POINT_EARNED = 10000; // Rp10.000 = 1 poin
 
 @Injectable()
 export class BookingsService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(BookingsService.name);
   private _escrowTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -46,6 +49,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     private readonly dataSource: DataSource,
     @Optional() private readonly notificationsService?: NotificationsService,
     @Optional() private readonly mailService?: MailService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
 
   private _resolveScheduleLabel(
@@ -82,12 +86,20 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         body: params.body,
         targetUrl: params.targetUrl ?? null,
       })
-      .catch(() => undefined);
+      .catch((err) => {
+        this.logger.warn(
+          `Gagal menyimpan notifikasi (userId=${params.userId}, type=${params.type}): ${err instanceof Error ? err.message : err}`,
+        );
+      });
   }
 
   onModuleInit() {
     this._escrowTimer = setInterval(() => {
-      this.autoReleaseExpiredHeldEscrows().catch(() => {});
+      this.autoReleaseExpiredHeldEscrows().catch((err) => {
+        this.logger.error(
+          `Gagal menjalankan autoReleaseExpiredHeldEscrows: ${err instanceof Error ? err.message : err}`,
+        );
+      });
     }, 6 * 60 * 60 * 1000);
     this._escrowTimer.unref();
   }
@@ -185,8 +197,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
             targetUrl: '/bookings',
           });
         }
-      } catch {
-        // Skip failed item and continue
+      } catch (err) {
+        this.logger.warn(
+          `Gagal auto-release escrow bookingId=${b.id}: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
     return releasedCount;
@@ -649,6 +663,13 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     usePoints?: boolean;
     paymentScheme?: 'FULL' | 'DP';
   }): Promise<Booking> {
+    const cfg = await this.platformService?.getSettings().catch(() => null);
+    if (cfg && cfg.allowDirectBookingGlobal === false) {
+      throw new BadRequestException(
+        'Fitur booking langsung sedang dinonaktifkan sementara oleh administrator.',
+      );
+    }
+
     const kost = await this.kostsService.findOne(params.kostId);
     if (kost.ownerId === params.userId) {
       throw new BadRequestException(
@@ -747,8 +768,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         : baseTotalAmount;
     const remainingAmount = Math.max(0, baseTotalAmount - payableRent);
 
+    const platformFeePercent =
+      cfg?.bookingPlatformFeePercent ?? BOOKING_PLATFORM_FEE_PERCENT;
     const basePlatformFee = Math.round(
-      (payableRent * BOOKING_PLATFORM_FEE_PERCENT) / 100,
+      (payableRent * platformFeePercent) / 100,
     );
 
     const user = await this.userRepository.findOne({
@@ -1474,8 +1497,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           bookingId: updated.id,
         });
         await this.chatsGateway.notifyNewChatMessage(autoChat);
-      } catch {
-        // Abaikan kegagalan notifikasi chat
+      } catch (err) {
+        this.logger.warn(
+          `Gagal mengirim auto-chat bookingId=${updated.id}: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
   }
@@ -1534,7 +1559,17 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    if (owner?.email && owner.id !== tenant?.id) {
+    if (!owner?.email) {
+      this.logger.warn(
+        `Email pemilik dilewati untuk bookingId=${booking.id} kostId=${kost.id} ownerId=${kost.ownerId}: email pemilik kosong`,
+      );
+      void this.platformService?.recordEvent({
+        level: 'WARN',
+        category: 'BOOKING',
+        message: `Email pemilik dilewati untuk booking #${booking.id} (${kost.name}): email kosong`,
+        meta: { bookingId: booking.id, kostId: kost.id, ownerId: kost.ownerId },
+      });
+    } else if (owner.id !== tenant?.id) {
       await this.mailService?.sendEmail(owner.email, {
         subject: `[Keyloka] Booking Baru Dibayar • ${kost.name}`,
         badgeText: 'Booking Dibayar',
