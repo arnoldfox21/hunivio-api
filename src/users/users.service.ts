@@ -47,14 +47,19 @@ import { StorageService } from '../storage/storage.service';
 import { MailService } from '../mail/mail.service';
 import { PlatformService } from '../platform/platform.service';
 
-export const GOOGLE_OAUTH_CONFIG = {
-  clientId:
-    '946056205847-4rh8tk8j7oha26gh9fs80olh43juh77m.apps.googleusercontent.com',
-  projectId: 'celestial-gecko-465811-m4',
-  authUri: 'https://accounts.google.com/o/oauth2/auth',
-  tokenUri: 'https://oauth2.googleapis.com/token',
-  authProviderX509CertUrl: 'https://www.googleapis.com/oauth2/v1/certs',
-};
+export function getGoogleOAuthConfig() {
+  return {
+    clientId:
+      process.env.GOOGLE_CLIENT_ID ||
+      '946056205847-4rh8tk8j7oha26gh9fs80olh43juh77m.apps.googleusercontent.com',
+    projectId: 'celestial-gecko-465811-m4',
+    authUri: 'https://accounts.google.com/o/oauth2/auth',
+    tokenUri: 'https://oauth2.googleapis.com/token',
+    authProviderX509CertUrl: 'https://www.googleapis.com/oauth2/v1/certs',
+  };
+}
+
+export const GOOGLE_OAUTH_CONFIG = getGoogleOAuthConfig();
 
 @Injectable()
 export class UsersService implements OnModuleInit {

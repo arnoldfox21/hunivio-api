@@ -38,6 +38,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+.env.dev
 
 # AI agent instructions
 AGENTS.md

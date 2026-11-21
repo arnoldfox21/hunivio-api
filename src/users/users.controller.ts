@@ -12,7 +12,7 @@ import {
   Req,
   ForbiddenException,
 } from '@nestjs/common';
-import { UsersService, GOOGLE_OAUTH_CONFIG } from './users.service';
+import { UsersService, getGoogleOAuthConfig } from './users.service';
 import {
   GoogleAuthDto,
   UpdateUserDto,
@@ -32,7 +32,7 @@ export class UsersController {
 
   @Get('google/config')
   getGoogleConfig() {
-    return GOOGLE_OAUTH_CONFIG;
+    return getGoogleOAuthConfig();
   }
 
   @Post('google')
