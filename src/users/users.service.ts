@@ -45,6 +45,7 @@ import {
 } from '../common/validation.util';
 import { StorageService } from '../storage/storage.service';
 import { MailService } from '../mail/mail.service';
+import { PlatformService } from '../platform/platform.service';
 
 export const GOOGLE_OAUTH_CONFIG = {
   clientId:
@@ -64,11 +65,18 @@ export class UsersService implements OnModuleInit {
     private readonly kostRepository: Repository<Kost>,
     private readonly storageService: StorageService,
     @Optional() private readonly mailService?: MailService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
 
   async onModuleInit() {
     await this.userRepository.query(
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS "roles" jsonb NOT NULL DEFAULT '[]'::jsonb`,
+    );
+    await this.userRepository.query(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS "fcmTokens" jsonb NOT NULL DEFAULT '[]'::jsonb`,
+    );
+    await this.userRepository.query(
+      `UPDATE users SET "fcmTokens" = jsonb_build_array("fcmToken") WHERE COALESCE("fcmToken", '') <> '' AND "fcmTokens" = '[]'::jsonb`,
     );
     if (process.env.ENABLE_AUTO_SEED === 'true') {
       await this._ensureDefaultStaffPartner();
@@ -527,7 +535,7 @@ export class UsersService implements OnModuleInit {
       user.coverUrl = dto.coverUrl.trim();
     }
     if (dto.fcmToken !== undefined) {
-      user.fcmToken = dto.fcmToken.trim();
+      await this._applyFcmTokenUpdate(user, dto.fcmToken);
     }
     const saved = await this.userRepository.save(user);
     if (previousAvatar && previousAvatar !== saved.avatarUrl) {
@@ -582,7 +590,15 @@ export class UsersService implements OnModuleInit {
     } else {
       user.roles = [normalizedRole];
     }
-    return this.userRepository.save(user);
+    const saved = await this.userRepository.save(user);
+    void this.platformService?.recordEvent({
+      level: 'INFO',
+      category: 'CONFIG',
+      actorUserId: dto.requesterId ?? null,
+      message: `Role pengguna userId=${id} diubah menjadi ${normalizedRole}`,
+      meta: { targetUserId: id, nextRole: normalizedRole },
+    });
+    return saved;
   }
 
   async completeOnboarding(
@@ -622,6 +638,15 @@ export class UsersService implements OnModuleInit {
       throw new BadRequestException(
         'Pilih peran sebagai Penyewa, Pemilik Properti, atau Keduanya.',
       );
+    }
+
+    if (finalRoles.includes('PEMILIK_KOST')) {
+      const cfg = await this.platformService?.getSettings().catch(() => null);
+      if (cfg && cfg.allowOwnerRegistration === false) {
+        throw new ForbiddenException(
+          'Pendaftaran sebagai pemilik properti sedang ditutup sementara oleh administrator.',
+        );
+      }
     }
 
     user.role = activeRole;
@@ -674,6 +699,14 @@ export class UsersService implements OnModuleInit {
       throw new BadRequestException(
         'Peran tambahan harus Penyewa atau Pemilik Properti.',
       );
+    }
+    if (targetRole === 'PEMILIK_KOST') {
+      const cfg = await this.platformService?.getSettings().catch(() => null);
+      if (cfg && cfg.allowOwnerRegistration === false) {
+        throw new ForbiddenException(
+          'Pendaftaran sebagai pemilik properti sedang ditutup sementara oleh administrator.',
+        );
+      }
     }
 
     const rawPhone =
@@ -772,29 +805,70 @@ export class UsersService implements OnModuleInit {
     };
   }
 
-  async updateFcmToken(
-    id: number,
+  private _normalizeFcmTokens(user: User): string[] {
+    const existing = Array.isArray(user.fcmTokens) ? user.fcmTokens : [];
+    const merged = [...existing, user.fcmToken]
+      .map((t) => (t || '').trim())
+      .filter(Boolean);
+    return Array.from(new Set(merged));
+  }
+
+  private async _applyFcmTokenUpdate(
+    user: User,
     fcmToken: string,
-  ): Promise<{ updated: boolean }> {
-    const user = await this.findOne(id);
+    removeToken?: string,
+  ): Promise<void> {
     const trimmed = (fcmToken || '').trim();
+    const toRemove = (removeToken || '').trim();
+    let list = this._normalizeFcmTokens(user);
+
     if (trimmed.length > 0) {
       await this.userRepository
         .createQueryBuilder()
         .update(User)
         .set({ fcmToken: '' })
-        .where('fcmToken = :token AND id != :id', { token: trimmed, id })
+        .where('fcmToken = :token AND id != :id', { token: trimmed, id: user.id })
         .execute();
+      await this.userRepository.query(
+        `UPDATE users SET "fcmTokens" = COALESCE((SELECT jsonb_agg(elem) FROM jsonb_array_elements_text("fcmTokens") AS elem WHERE elem <> $1), '[]'::jsonb) WHERE id <> $2 AND "fcmTokens" @> $3::jsonb`,
+        [trimmed, user.id, JSON.stringify([trimmed])],
+      );
+      list = [...list.filter((t) => t !== trimmed), trimmed].slice(-10);
+      user.fcmTokens = list;
+      user.fcmToken = trimmed;
+      return;
     }
-    user.fcmToken = trimmed;
+
+    const targetRemove = toRemove || (user.fcmToken || '').trim();
+    if (targetRemove) {
+      list = list.filter((t) => t !== targetRemove);
+    } else if (list.length <= 1) {
+      list = [];
+    }
+    user.fcmTokens = list;
+    user.fcmToken = list[list.length - 1] || '';
+  }
+
+  async updateFcmToken(
+    id: number,
+    fcmToken: string,
+    removeToken?: string,
+  ): Promise<{ updated: boolean }> {
+    const user = await this.findOne(id);
+    await this._applyFcmTokenUpdate(user, fcmToken, removeToken);
     await this.userRepository.save(user);
     return { updated: true };
   }
 
-  async getFcmToken(id: number): Promise<string | null> {
+  async getFcmTokens(id: number): Promise<string[]> {
     const user = await this.userRepository.findOne({ where: { id } });
-    const token = user?.fcmToken?.trim();
-    return token && token.length > 0 ? token : null;
+    if (!user) return [];
+    return this._normalizeFcmTokens(user);
+  }
+
+  async getFcmToken(id: number): Promise<string | null> {
+    const tokens = await this.getFcmTokens(id);
+    return tokens.length > 0 ? tokens[tokens.length - 1] : null;
   }
 
   async setBanStatus(
@@ -828,8 +902,17 @@ export class UsersService implements OnModuleInit {
     user.bannedAt = isBanned ? new Date() : null;
     if (isBanned) {
       user.fcmToken = '';
+      user.fcmTokens = [];
     }
-    return this.userRepository.save(user);
+    const saved = await this.userRepository.save(user);
+    void this.platformService?.recordEvent({
+      level: 'WARN',
+      category: 'AUTH',
+      actorUserId: requesterId,
+      message: `Pengguna userId=${id} ${isBanned ? 'DIBANNED' : 'DI-UNBAN'}`,
+      meta: { targetUserId: id, isBanned },
+    });
+    return saved;
   }
 
   async requestOwnerVerification(

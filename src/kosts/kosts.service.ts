@@ -2,7 +2,9 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleDestroy,
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
@@ -10,6 +12,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { Kost } from './entities/kost.entity';
 import { KostReport } from './entities/kost-report.entity';
+import { KostDailyStat } from './entities/kost-daily-stat.entity';
 import { Facility } from './entities/facility.entity';
 import { UserFavorite } from './entities/user-favorite.entity';
 import { User } from '../users/entities/user.entity';
@@ -21,6 +24,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { toTitleCaseRegion } from '../common/region-format.util';
 import { StorageService } from '../storage/storage.service';
 import { MailService } from '../mail/mail.service';
+import { PlatformService } from '../platform/platform.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const sharp = require('sharp') as typeof import('sharp').default;
 import {
@@ -30,7 +34,15 @@ import {
 } from '../wallet/wallet.service';
 
 @Injectable()
-export class KostsService implements OnModuleInit {
+export class KostsService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(KostsService.name);
+  private readonly _engagementDedupe = new Map<string, number>();
+  private readonly _pendingMetrics = new Map<
+    string,
+    { kostId: number; date: string; views: number; waClicks: number }
+  >();
+  private _metricsFlushTimer: NodeJS.Timeout | null = null;
+
   constructor(
     @InjectRepository(Kost)
     private readonly kostRepository: Repository<Kost>,
@@ -40,6 +52,8 @@ export class KostsService implements OnModuleInit {
     private readonly facilityRepository: Repository<Facility>,
     @InjectRepository(UserFavorite)
     private readonly favoriteRepository: Repository<UserFavorite>,
+    @InjectRepository(KostDailyStat)
+    private readonly dailyStatRepository: Repository<KostDailyStat>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly firebaseNotificationService: FirebaseNotificationService,
@@ -48,13 +62,44 @@ export class KostsService implements OnModuleInit {
     private readonly storageService: StorageService,
     @Optional() private readonly notificationsService?: NotificationsService,
     @Optional() private readonly mailService?: MailService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
 
   async onModuleInit() {
+    await this.dataSource.query(`
+      ALTER TABLE kosts ADD COLUMN IF NOT EXISTS "viewCount" integer NOT NULL DEFAULT 0;
+      ALTER TABLE kosts ADD COLUMN IF NOT EXISTS "waClickCount" integer NOT NULL DEFAULT 0;
+      CREATE TABLE IF NOT EXISTS kost_daily_stats (
+        id SERIAL PRIMARY KEY,
+        "kostId" integer NOT NULL,
+        date varchar(10) NOT NULL,
+        views integer NOT NULL DEFAULT 0,
+        "waClicks" integer NOT NULL DEFAULT 0,
+        CONSTRAINT "UQ_kost_daily_stats_kostId_date" UNIQUE ("kostId", date)
+      );
+      CREATE INDEX IF NOT EXISTS "IDX_kost_daily_stats_kostId" ON kost_daily_stats ("kostId");
+      CREATE INDEX IF NOT EXISTS "IDX_kost_daily_stats_date" ON kost_daily_stats (date);
+    `);
     await this.cleanBrandNamesInDb();
     if (process.env.ENABLE_AUTO_SEED === 'true') {
       await this.seedFacilitiesIfNeeded();
     }
+    this._metricsFlushTimer = setInterval(() => {
+      this._flushPendingMetrics().catch((err) => {
+        this.logger.warn(
+          `Gagal flush metrik kunjungan properti: ${err instanceof Error ? err.message : err}`,
+        );
+      });
+    }, 15_000);
+    this._metricsFlushTimer.unref();
+  }
+
+  async onModuleDestroy() {
+    if (this._metricsFlushTimer) {
+      clearInterval(this._metricsFlushTimer);
+      this._metricsFlushTimer = null;
+    }
+    await this._flushPendingMetrics().catch(() => undefined);
   }
 
   private async seedFacilitiesIfNeeded() {
@@ -437,17 +482,21 @@ export class KostsService implements OnModuleInit {
     switch (query.sortBy) {
       case 'price_asc':
         qb.addSelect(effectivePriceExpr, 'effective_price')
-          .orderBy('effective_price', 'ASC');
+          .orderBy('effective_price', 'ASC')
+          .addOrderBy('kost.id', 'DESC');
         break;
       case 'price_desc':
         qb.addSelect(effectivePriceExpr, 'effective_price')
-          .orderBy('effective_price', 'DESC');
+          .orderBy('effective_price', 'DESC')
+          .addOrderBy('kost.id', 'DESC');
         break;
       case 'rating_desc':
-        qb.orderBy('kost.rating', 'DESC').addOrderBy('kost.reviewCount', 'DESC');
+        qb.orderBy('kost.rating', 'DESC')
+          .addOrderBy('kost.reviewCount', 'DESC')
+          .addOrderBy('kost.id', 'DESC');
         break;
       case 'newest':
-        qb.orderBy('kost.createdAt', 'DESC');
+        qb.orderBy('kost.createdAt', 'DESC').addOrderBy('kost.id', 'DESC');
         break;
       default: {
         const recommendationScoreExpr =
@@ -468,7 +517,9 @@ export class KostsService implements OnModuleInit {
           .orderBy('is_boosted', 'DESC')
           .addOrderBy('kost.boostedUntil', 'DESC', 'NULLS LAST')
           .addOrderBy('has_rooms', 'DESC')
-          .addOrderBy('recommendation_score', 'DESC');
+          .addOrderBy('recommendation_score', 'DESC')
+          .addOrderBy('kost.createdAt', 'DESC')
+          .addOrderBy('kost.id', 'DESC');
         break;
       }
     }
@@ -877,14 +928,18 @@ export class KostsService implements OnModuleInit {
       creatorRole === 'ADMINISTRATOR' || creatorRole === 'STAFF';
     const isAutoApproved = isStaffOrAdmin || Boolean(creator?.isVerified);
 
+    const cfg = await this.platformService?.getSettings().catch(() => null);
+    const freeQuota = cfg?.freePropertyQuota ?? FREE_PROPERTY_QUOTA;
+    const slotFee = cfg?.extraPropertySlotFee ?? EXTRA_PROPERTY_SLOT_FEE;
+
     return this.dataSource.transaction(async (manager) => {
       const kostRepo = manager.getRepository(Kost);
       const existingCount = await kostRepo.count({ where: { ownerId } });
 
-      if (!isStaffOrAdmin && existingCount >= FREE_PROPERTY_QUOTA) {
+      if (!isStaffOrAdmin && existingCount >= freeQuota) {
         await this.walletService.deductCredit({
           userId: ownerId,
-          amount: EXTRA_PROPERTY_SLOT_FEE,
+          amount: slotFee,
           type: 'SLOT_FEE',
           description: `Aktivasi Slot Properti ke-${existingCount + 1} — ${dto.name}`,
           manager,
@@ -1072,7 +1127,16 @@ export class KostsService implements OnModuleInit {
         const owner = await this.userRepository.findOne({
           where: { id: kost.ownerId },
         });
-        const token = owner?.fcmToken?.trim();
+        const ownerTokens = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(owner?.fcmTokens) ? owner.fcmTokens : []),
+              owner?.fcmToken || '',
+            ]
+              .map((t) => t.trim())
+              .filter(Boolean),
+          ),
+        );
         const title =
           normalized === 'APPROVED'
             ? 'Properti Disetujui'
@@ -1082,7 +1146,7 @@ export class KostsService implements OnModuleInit {
             ? `${kost.name} telah disetujui dan kini tampil di pencarian Keyloka.`
             : `${kost.name} perlu diperbaiki${kost.rejectionReason ? `: ${kost.rejectionReason}` : '.'}`;
         await this.firebaseNotificationService.sendGeneralNotification({
-          token: token || '',
+          tokens: ownerTokens,
           title,
           body,
           userId: kost.ownerId,
@@ -1302,9 +1366,8 @@ export class KostsService implements OnModuleInit {
         .toBuffer();
       outputExt = 'webp';
     } catch (err) {
-      console.warn(
-        `[upload-image] sharp gagal memproses gambar, fallback ke file asli (${fallbackExt}):`,
-        err instanceof Error ? err.message : err,
+      this.logger.warn(
+        `[upload-image] sharp gagal memproses gambar, fallback ke file asli (${fallbackExt}): ${err instanceof Error ? err.message : err}`,
       );
       outputBuffer = buffer;
       outputExt = fallbackExt;
@@ -1495,5 +1558,506 @@ export class KostsService implements OnModuleInit {
     report.status = 'DISMISSED';
     await this.kostReportRepository.save(report);
     return { success: true };
+  }
+
+  private _todayWibDateString(): string {
+    const wibMs = Date.now() + 7 * 60 * 60 * 1000;
+    return new Date(wibMs).toISOString().slice(0, 10);
+  }
+
+  async recordEngagement(
+    kostId: number,
+    type: 'VIEW' | 'WA_CLICK',
+    viewerIp: string,
+    viewerUserId?: number | null,
+  ): Promise<{ counted: boolean }> {
+    const kost = await this.kostRepository.findOne({
+      where: { id: kostId },
+      select: ['id', 'ownerId', 'approvalStatus'],
+    });
+    if (!kost || (kost.approvalStatus || 'APPROVED').toUpperCase() !== 'APPROVED') {
+      return { counted: false };
+    }
+    if (viewerUserId && kost.ownerId === viewerUserId) {
+      return { counted: false };
+    }
+
+    const now = Date.now();
+    const ttlMs = type === 'VIEW' ? 10 * 60_000 : 2 * 60_000;
+    const dedupeKey = `${type}:${kostId}:${viewerUserId || viewerIp || 'anon'}`;
+    const exp = this._engagementDedupe.get(dedupeKey);
+    if (exp && now < exp) {
+      return { counted: false };
+    }
+    this._engagementDedupe.set(dedupeKey, now + ttlMs);
+    if (this._engagementDedupe.size > 10_000) {
+      for (const [k, v] of this._engagementDedupe) {
+        if (now >= v) this._engagementDedupe.delete(k);
+      }
+    }
+
+    const date = this._todayWibDateString();
+    const bucketKey = `${kostId}:${date}`;
+    const existing = this._pendingMetrics.get(bucketKey) || {
+      kostId,
+      date,
+      views: 0,
+      waClicks: 0,
+    };
+    if (type === 'VIEW') {
+      existing.views += 1;
+    } else {
+      existing.waClicks += 1;
+    }
+    this._pendingMetrics.set(bucketKey, existing);
+    return { counted: true };
+  }
+
+  private async _flushPendingMetrics(): Promise<void> {
+    if (this._pendingMetrics.size === 0) return;
+    const batch = Array.from(this._pendingMetrics.values());
+    this._pendingMetrics.clear();
+
+    const kostTotals = new Map<number, { views: number; waClicks: number }>();
+    for (const item of batch) {
+      await this.dataSource.query(
+        `
+          INSERT INTO kost_daily_stats ("kostId", date, views, "waClicks")
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT ("kostId", date)
+          DO UPDATE SET
+            views = kost_daily_stats.views + EXCLUDED.views,
+            "waClicks" = kost_daily_stats."waClicks" + EXCLUDED."waClicks"
+        `,
+        [item.kostId, item.date, item.views, item.waClicks],
+      );
+      const prev = kostTotals.get(item.kostId) || { views: 0, waClicks: 0 };
+      prev.views += item.views;
+      prev.waClicks += item.waClicks;
+      kostTotals.set(item.kostId, prev);
+    }
+
+    for (const [kostId, delta] of kostTotals) {
+      await this.dataSource.query(
+        `
+          UPDATE kosts
+          SET "viewCount" = COALESCE("viewCount", 0) + $2,
+              "waClickCount" = COALESCE("waClickCount", 0) + $3
+          WHERE id = $1
+        `,
+        [kostId, delta.views, delta.waClicks],
+      );
+    }
+  }
+
+  async getOwnerStatistics(
+    ownerId: number,
+    opts?: { period?: string; kostId?: number },
+  ) {
+    await this._flushPendingMetrics().catch(() => undefined);
+
+    const period = (opts?.period || '6M').toUpperCase();
+    const filterKostId =
+      opts?.kostId && Number.isFinite(opts.kostId) && opts.kostId > 0
+        ? Number(opts.kostId)
+        : null;
+
+    const ownerKosts = await this.kostRepository.find({
+      where: filterKostId ? { id: filterKostId, ownerId } : { ownerId },
+      order: { createdAt: 'DESC' },
+    });
+
+    const kostIds = ownerKosts.map((k) => k.id);
+    const totalRoomsAvailable = ownerKosts.reduce(
+      (sum, k) => sum + Number(k.availableRooms ?? 0),
+      0,
+    );
+    const totalViews = ownerKosts.reduce(
+      (sum, k) => sum + Number(k.viewCount ?? 0),
+      0,
+    );
+    const totalWaClicks = ownerKosts.reduce(
+      (sum, k) => sum + Number(k.waClickCount ?? 0),
+      0,
+    );
+
+    const now = new Date();
+    const wibOffsetMs = 7 * 60 * 60 * 1000;
+    const wibNow = new Date(now.getTime() + wibOffsetMs);
+    const dailyDays = 30;
+    const dailyStartWib = new Date(
+      Date.UTC(
+        wibNow.getUTCFullYear(),
+        wibNow.getUTCMonth(),
+        wibNow.getUTCDate() - (dailyDays - 1),
+      ),
+    );
+    const dailyStartStr = dailyStartWib.toISOString().slice(0, 10);
+
+    const monthsCount = period === '12M' ? 12 : 6;
+    let bookingCutoff: Date | null = null;
+    if (period === '30D') {
+      bookingCutoff = new Date(
+        Date.UTC(
+          wibNow.getUTCFullYear(),
+          wibNow.getUTCMonth(),
+          wibNow.getUTCDate() - 29,
+        ) - wibOffsetMs,
+      );
+    } else if (period === '6M' || period === '12M') {
+      bookingCutoff = new Date(
+        Date.UTC(
+          wibNow.getUTCFullYear(),
+          wibNow.getUTCMonth() - (monthsCount - 1),
+          1,
+        ) - wibOffsetMs,
+      );
+    }
+
+    if (kostIds.length === 0) {
+      return {
+        period,
+        kostId: filterKostId,
+        summary: {
+          totalProperties: 0,
+          totalRoomsAvailable: 0,
+          totalViews: 0,
+          totalWaClicks: 0,
+          totalFavorites: 0,
+          totalChats: 0,
+          totalSurveys: 0,
+          totalDirectBookings: 0,
+          paidBookingsCount: 0,
+          totalGrossRevenue: 0,
+          totalNetRevenue: 0,
+          avgRating: 0,
+          totalReviews: 0,
+          surveyApprovalRate: 0,
+        },
+        dailyEngagement: [],
+        monthlyTrend: [],
+        statusBreakdown: {
+          activeOrDone: 0,
+          paidHeld: 0,
+          pending: 0,
+          cancelledOrRejected: 0,
+          fullScheme: 0,
+          dpScheme: 0,
+        },
+        reviewBreakdown: {
+          count: 0,
+          avgOverall: 0,
+          avgCleanliness: 0,
+          avgSecurity: 0,
+          avgAccuracy: 0,
+        },
+        propertyPerformance: [],
+      };
+    }
+
+    const [
+      dailyRows,
+      periodEngagementRows,
+      favoriteRows,
+      chatCountRow,
+      bookingSummaryRows,
+      monthlyRows,
+      reviewRow,
+      propertyBookingRows,
+    ] = await Promise.all([
+      this.dataSource.query(
+        `
+          SELECT date, SUM(views)::int AS views, SUM("waClicks")::int AS "waClicks"
+          FROM kost_daily_stats
+          WHERE "kostId" = ANY($1) AND date >= $2
+          GROUP BY date
+          ORDER BY date ASC
+        `,
+        [kostIds, dailyStartStr],
+      ) as Promise<Array<{ date: string; views: number; waClicks: number }>>,
+      bookingCutoff
+        ? (this.dataSource.query(
+            `
+              SELECT "kostId", SUM(views)::int AS views, SUM("waClicks")::int AS "waClicks"
+              FROM kost_daily_stats
+              WHERE "kostId" = ANY($1) AND date >= $2
+              GROUP BY "kostId"
+            `,
+            [
+              kostIds,
+              new Date(bookingCutoff.getTime() + 7 * 60 * 60 * 1000)
+                .toISOString()
+                .slice(0, 10),
+            ],
+          ) as Promise<Array<{ kostId: number; views: number; waClicks: number }>>)
+        : Promise.resolve([] as Array<{ kostId: number; views: number; waClicks: number }>),
+      this.dataSource.query(
+        `
+          SELECT "kostId", COUNT(*)::int AS cnt
+          FROM user_favorites
+          WHERE "kostId" = ANY($1)
+          GROUP BY "kostId"
+        `,
+        [kostIds],
+      ) as Promise<Array<{ kostId: number; cnt: number }>>,
+      this.dataSource.query(
+        `
+          SELECT COUNT(DISTINCT ("senderId", "kostId"))::int AS cnt
+          FROM chat_messages
+          WHERE "kostId" = ANY($1) AND "receiverId" = $2 AND "senderId" <> $2
+        `,
+        [kostIds, ownerId],
+      ) as Promise<Array<{ cnt: number }>>,
+      this.dataSource.query(
+        `
+          SELECT
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", 'SURVEI')) = 'SURVEI')::int AS surveys,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", 'SURVEI')) = 'SURVEI' AND UPPER(status) IN ('DISETUJUI', 'APPROVED', 'SELESAI'))::int AS surveys_approved,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", '')) = 'SEWA')::int AS direct_bookings,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID' AND UPPER(COALESCE("escrowStatus", '')) <> 'REFUNDED')::int AS paid_bookings,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID' AND UPPER(COALESCE("escrowStatus", '')) <> 'REFUNDED' THEN COALESCE(NULLIF("paidAmount", 0), "totalAmount", 0) ELSE 0 END), 0)::bigint AS gross_revenue,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID' AND UPPER(COALESCE("escrowStatus", '')) <> 'REFUNDED' THEN COALESCE("ownerNetAmount", 0) ELSE 0 END), 0)::bigint AS net_revenue,
+            COUNT(*) FILTER (WHERE UPPER(status) IN ('AKTIF', 'SELESAI'))::int AS active_or_done,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("escrowStatus", '')) = 'HELD' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID')::int AS paid_held,
+            COUNT(*) FILTER (WHERE UPPER(status) IN ('TERKIRIM', 'MENUNGGU KONFIRMASI', 'MENUNGGU_PEMBAYARAN', 'DISETUJUI'))::int AS pending_cnt,
+            COUNT(*) FILTER (WHERE UPPER(status) IN ('DIBATALKAN', 'DITOLAK'))::int AS cancelled_cnt,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentScheme", 'FULL')) = 'FULL')::int AS full_scheme,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentScheme", '')) = 'DP')::int AS dp_scheme
+          FROM bookings
+          WHERE "kostId" = ANY($1)
+            AND ($2::timestamp IS NULL OR "createdAt" >= $2)
+        `,
+        [kostIds, bookingCutoff],
+      ) as Promise<Array<Record<string, string | number>>>,
+      this.dataSource.query(
+        `
+          SELECT
+            TO_CHAR("createdAt" AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM') AS month_key,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", 'SURVEI')) = 'SURVEI')::int AS surveys,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID' AND UPPER(COALESCE("escrowStatus", '')) <> 'REFUNDED')::int AS direct_bookings,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID' AND UPPER(COALESCE("escrowStatus", '')) <> 'REFUNDED' THEN COALESCE(NULLIF("paidAmount", 0), "totalAmount", 0) ELSE 0 END), 0)::bigint AS gross_revenue,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID' AND UPPER(COALESCE("escrowStatus", '')) <> 'REFUNDED' THEN COALESCE("ownerNetAmount", 0) ELSE 0 END), 0)::bigint AS net_revenue
+          FROM bookings
+          WHERE "kostId" = ANY($1)
+            AND ($2::timestamp IS NULL OR "createdAt" >= $2)
+          GROUP BY month_key
+          ORDER BY month_key ASC
+        `,
+        [kostIds, bookingCutoff],
+      ) as Promise<
+        Array<{
+          month_key: string;
+          surveys: number;
+          direct_bookings: number;
+          gross_revenue: string;
+          net_revenue: string;
+        }>
+      >,
+      this.dataSource.query(
+        `
+          SELECT
+            COUNT(*)::int AS cnt,
+            COALESCE(ROUND(AVG("overallRating")::numeric, 2), 0)::float AS avg_overall,
+            COALESCE(ROUND(AVG("ratingCleanliness")::numeric, 2), 0)::float AS avg_cleanliness,
+            COALESCE(ROUND(AVG("ratingSecurity")::numeric, 2), 0)::float AS avg_security,
+            COALESCE(ROUND(AVG("ratingAccuracy")::numeric, 2), 0)::float AS avg_accuracy
+          FROM reviews
+          WHERE "kostId" = ANY($1)
+        `,
+        [kostIds],
+      ) as Promise<
+        Array<{
+          cnt: number;
+          avg_overall: number;
+          avg_cleanliness: number;
+          avg_security: number;
+          avg_accuracy: number;
+        }>
+      >,
+      this.dataSource.query(
+        `
+          SELECT
+            "kostId",
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", 'SURVEI')) = 'SURVEI')::int AS surveys,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID' AND UPPER(COALESCE("escrowStatus", '')) <> 'REFUNDED')::int AS bookings,
+            COALESCE(SUM(CASE WHEN UPPER(COALESCE("bookingType", '')) = 'SEWA' AND UPPER(COALESCE("paymentStatus", '')) = 'PAID' AND UPPER(COALESCE("escrowStatus", '')) <> 'REFUNDED' THEN COALESCE("ownerNetAmount", 0) ELSE 0 END), 0)::bigint AS net_revenue
+          FROM bookings
+          WHERE "kostId" = ANY($1)
+            AND ($2::timestamp IS NULL OR "createdAt" >= $2)
+          GROUP BY "kostId"
+        `,
+        [kostIds, bookingCutoff],
+      ) as Promise<
+        Array<{
+          kostId: number;
+          surveys: number;
+          bookings: number;
+          net_revenue: string;
+        }>
+      >,
+    ]);
+
+    const dailyMap = new Map(dailyRows.map((r) => [r.date, r]));
+    const dailyEngagement: Array<{
+      date: string;
+      label: string;
+      views: number;
+      waClicks: number;
+    }> = [];
+    for (let i = dailyDays - 1; i >= 0; i -= 1) {
+      const wibDay = new Date(
+        Date.UTC(
+          wibNow.getUTCFullYear(),
+          wibNow.getUTCMonth(),
+          wibNow.getUTCDate() - i,
+        ),
+      );
+      const iso = wibDay.toISOString().slice(0, 10);
+      const found = dailyMap.get(iso);
+      dailyEngagement.push({
+        date: iso,
+        label: wibDay.toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'short',
+          timeZone: 'UTC',
+        }),
+        views: Number(found?.views ?? 0),
+        waClicks: Number(found?.waClicks ?? 0),
+      });
+    }
+
+    const monthlyMap = new Map(monthlyRows.map((r) => [r.month_key, r]));
+    const monthlyTrend: Array<{
+      key: string;
+      label: string;
+      surveys: number;
+      directBookings: number;
+      grossRevenue: number;
+      netRevenue: number;
+    }> = [];
+    const trendMonths = period === 'ALL' ? Math.max(6, monthlyRows.length) : monthsCount;
+    for (let i = trendMonths - 1; i >= 0; i -= 1) {
+      const wibMonth = new Date(
+        Date.UTC(wibNow.getUTCFullYear(), wibNow.getUTCMonth() - i, 1),
+      );
+      const key = `${wibMonth.getUTCFullYear()}-${String(wibMonth.getUTCMonth() + 1).padStart(2, '0')}`;
+      const found = monthlyMap.get(key);
+      monthlyTrend.push({
+        key,
+        label: wibMonth.toLocaleDateString('id-ID', {
+          month: 'short',
+          year: '2-digit',
+          timeZone: 'UTC',
+        }),
+        surveys: Number(found?.surveys ?? 0),
+        directBookings: Number(found?.direct_bookings ?? 0),
+        grossRevenue: Number(found?.gross_revenue ?? 0),
+        netRevenue: Number(found?.net_revenue ?? 0),
+      });
+    }
+
+    const favMap = new Map(favoriteRows.map((r) => [Number(r.kostId), Number(r.cnt)]));
+    const totalFavorites = Array.from(favMap.values()).reduce((a, b) => a + b, 0);
+    const propBookingMap = new Map(
+      propertyBookingRows.map((r) => [Number(r.kostId), r]),
+    );
+    const bs = bookingSummaryRows[0] || {};
+    const rev = reviewRow[0] || {
+      cnt: 0,
+      avg_overall: 0,
+      avg_cleanliness: 0,
+      avg_security: 0,
+      avg_accuracy: 0,
+    };
+
+    const totalSurveys = Number(bs.surveys ?? 0);
+    const surveysApproved = Number(bs.surveys_approved ?? 0);
+    const surveyApprovalRate =
+      totalSurveys > 0 ? Math.round((surveysApproved / totalSurveys) * 100) : 0;
+
+    const periodEngMap = new Map(
+      periodEngagementRows.map((r) => [Number(r.kostId), r]),
+    );
+    const propertyPerformance = ownerKosts
+      .map((k) => {
+        const pb = propBookingMap.get(k.id);
+        const pe = periodEngMap.get(k.id);
+        const views = bookingCutoff
+          ? Number(pe?.views ?? 0)
+          : Number(k.viewCount ?? 0);
+        const waClicks = bookingCutoff
+          ? Number(pe?.waClicks ?? 0)
+          : Number(k.waClickCount ?? 0);
+        return {
+          kostId: k.id,
+          name: k.name,
+          city: k.city,
+          propertyCategory: k.propertyCategory,
+          availableRooms: Number(k.availableRooms ?? 0),
+          rating: Number(k.rating ?? 0),
+          reviewCount: Number(k.reviewCount ?? 0),
+          views,
+          waClicks,
+          favorites: favMap.get(k.id) ?? 0,
+          surveys: Number(pb?.surveys ?? 0),
+          bookings: Number(pb?.bookings ?? 0),
+          netRevenue: Number(pb?.net_revenue ?? 0),
+          isBoosted:
+            Boolean(k.boostedUntil) &&
+            new Date(k.boostedUntil!).getTime() > Date.now(),
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.netRevenue - a.netRevenue ||
+          b.bookings - a.bookings ||
+          b.views - a.views,
+      );
+
+    const effectiveTotalViews = bookingCutoff
+      ? propertyPerformance.reduce((sum, p) => sum + p.views, 0)
+      : totalViews;
+    const effectiveTotalWaClicks = bookingCutoff
+      ? propertyPerformance.reduce((sum, p) => sum + p.waClicks, 0)
+      : totalWaClicks;
+
+    return {
+      period,
+      kostId: filterKostId,
+      summary: {
+        totalProperties: ownerKosts.length,
+        totalRoomsAvailable,
+        totalViews: effectiveTotalViews,
+        totalWaClicks: effectiveTotalWaClicks,
+        totalFavorites,
+        totalChats: Number(chatCountRow[0]?.cnt ?? 0),
+        totalSurveys,
+        totalDirectBookings: Number(bs.direct_bookings ?? 0),
+        paidBookingsCount: Number(bs.paid_bookings ?? 0),
+        totalGrossRevenue: Number(bs.gross_revenue ?? 0),
+        totalNetRevenue: Number(bs.net_revenue ?? 0),
+        avgRating: Number(rev.avg_overall ?? 0),
+        totalReviews: Number(rev.cnt ?? 0),
+        surveyApprovalRate,
+      },
+      dailyEngagement,
+      monthlyTrend,
+      statusBreakdown: {
+        activeOrDone: Number(bs.active_or_done ?? 0),
+        paidHeld: Number(bs.paid_held ?? 0),
+        pending: Number(bs.pending_cnt ?? 0),
+        cancelledOrRejected: Number(bs.cancelled_cnt ?? 0),
+        fullScheme: Number(bs.full_scheme ?? 0),
+        dpScheme: Number(bs.dp_scheme ?? 0),
+      },
+      reviewBreakdown: {
+        count: Number(rev.cnt ?? 0),
+        avgOverall: Number(rev.avg_overall ?? 0),
+        avgCleanliness: Number(rev.avg_cleanliness ?? 0),
+        avgSecurity: Number(rev.avg_security ?? 0),
+        avgAccuracy: Number(rev.avg_accuracy ?? 0),
+      },
+      propertyPerformance,
+    };
   }
 }

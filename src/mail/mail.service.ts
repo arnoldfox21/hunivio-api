@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { KeylokaEmailInput, renderKeylokaEmail } from './mail-templates';
+import { PlatformService } from '../platform/platform.service';
 
 @Injectable()
 export class MailService {
@@ -12,10 +13,10 @@ export class MailService {
   private readonly resendApiKey: string;
   private smtpTransporter: Transporter | null = null;
 
-  constructor() {
+  constructor(@Optional() private readonly platformService?: PlatformService) {
     const rawProvider = (process.env.MAIL_PROVIDER || '').trim().toLowerCase();
     this.fromAddress =
-      process.env.MAIL_FROM?.trim() || 'Keyloka <no-replay@keyloka.com>';
+      process.env.MAIL_FROM?.trim() || 'Keyloka <no-reply@keyloka.com>';
     this.frontendUrl = (
       process.env.FRONTEND_URL?.trim() || 'https://keyloka.com'
     ).replace(/\/+$/, '');
@@ -104,23 +105,43 @@ export class MailService {
           this.logger.warn(
             `Gagal mengirim email Resend ke ${recipient} (${res.status}): ${errText}`,
           );
+          void this.platformService?.recordEvent({
+            level: 'ERROR',
+            category: 'MAIL',
+            message: `Gagal mengirim email Resend ke ${recipient} (${res.status})`,
+            meta: { subject: rendered.subject, status: res.status },
+          });
+          return;
         }
+        this.logger.log(
+          `Email Resend terkirim ke ${recipient} (${rendered.subject})`,
+        );
         return;
       }
 
       if (this.provider === 'smtp' && this.smtpTransporter) {
-        await this.smtpTransporter.sendMail({
+        const info = await this.smtpTransporter.sendMail({
           from: this.fromAddress,
           to: recipient,
           subject: rendered.subject,
           html: rendered.html,
           text: rendered.text,
         });
+        this.logger.log(
+          `Email SMTP terkirim ke ${recipient} (${rendered.subject}) messageId=${info.messageId}`,
+        );
       }
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       this.logger.warn(
-        `Gagal mengirim email ke ${recipient} (${rendered.subject}): ${err instanceof Error ? err.message : err}`,
+        `Gagal mengirim email ke ${recipient} (${rendered.subject}): ${errMsg}`,
       );
+      void this.platformService?.recordEvent({
+        level: 'ERROR',
+        category: 'MAIL',
+        message: `Gagal mengirim email ke ${recipient}: ${errMsg}`,
+        meta: { subject: rendered.subject, provider: this.provider },
+      });
     }
   }
 }

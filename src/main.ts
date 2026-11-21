@@ -13,22 +13,27 @@ import { execSync } from 'child_process';
 import * as path from 'path';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger as NestLogger, ValidationPipe } from '@nestjs/common';
 import * as compression from 'compression';
 import * as express from 'express';
 import helmet from 'helmet';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  const bootstrapLogger = new NestLogger('Bootstrap');
   if (!process.env.DATABASE_URL) {
     try {
       const scriptPath = path.resolve(__dirname, '..', 'ensure-postgres.sh');
       execSync(`bash "${scriptPath}"`, { stdio: 'inherit' });
     } catch (err) {
-      console.error('⚠️ Gagal menjalankan ensure-postgres.sh:', err);
+      bootstrapLogger.error('Gagal menjalankan ensure-postgres.sh', err);
     }
   }
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
+  app.useLogger(app.get(Logger));
   app.set('trust proxy', 1);
   app.use(compression());
   app.use(
@@ -116,8 +121,8 @@ async function bootstrap() {
 
   const corsOrigin = process.env.CORS_ORIGIN?.trim();
   if (process.env.NODE_ENV === 'production' && !corsOrigin) {
-    console.warn(
-      '⚠️ CORS_ORIGIN belum diset di production; CORS fallback ke wildcard (*).',
+    bootstrapLogger.warn(
+      'CORS_ORIGIN belum diset di production; CORS fallback ke wildcard (*).',
     );
   }
   app.enableCors({
@@ -134,6 +139,8 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3001;
   await app.listen(port, '0.0.0.0');
-  console.log(`🚀 Keyloka NestJS API running on http://0.0.0.0:${port}/api`);
+  bootstrapLogger.log(
+    `Keyloka NestJS API running on http://0.0.0.0:${port}/api`,
+  );
 }
 bootstrap();

@@ -158,6 +158,7 @@ export class UsersController {
   updateFcmToken(
     @Param('id', ParseIntPipe) id: number,
     @Body('fcmToken') fcmToken: string,
+    @Body('removeToken') removeToken: string | undefined,
     @Req() req: AuthenticatedRequest,
   ) {
     if (req.user.userId !== id) {
@@ -165,7 +166,7 @@ export class UsersController {
         'Anda tidak dapat mengubah FCM token milik pengguna lain.',
       );
     }
-    return this.usersService.updateFcmToken(id, fcmToken);
+    return this.usersService.updateFcmToken(id, fcmToken, removeToken);
   }
 
   @UseGuards(JwtAuthGuard)

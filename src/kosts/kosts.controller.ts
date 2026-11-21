@@ -165,6 +165,62 @@ export class KostsController {
     return this.kostsService.dismissReport(reportId);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('PEMILIK_KOST', 'STAFF', 'ADMINISTRATOR')
+  @Get('owner/statistics')
+  getOwnerStatistics(
+    @Req() req: AuthenticatedRequest,
+    @Query('period') period?: string,
+    @Query('kostId') kostId?: string,
+  ) {
+    return this.kostsService.getOwnerStatistics(req.user.userId, {
+      period,
+      kostId: kostId ? parseInt(kostId, 10) : undefined,
+    });
+  }
+
+  @Post(':id/track')
+  trackEngagement(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('type') rawType: string,
+    @Body('visitorId') visitorId: string | undefined,
+    @Req() req: Request,
+  ) {
+    const type = (rawType || '').trim().toUpperCase();
+    if (type !== 'VIEW' && type !== 'WA_CLICK') {
+      throw new BadRequestException('Tipe tracking harus VIEW atau WA_CLICK.');
+    }
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+    const authUser = token ? verifyAuthToken(token) : null;
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const firstForwarded = Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : typeof forwardedFor === 'string'
+        ? forwardedFor.split(',')[0]?.trim()
+        : undefined;
+    const clientIpHeader = req.headers['x-client-ip'];
+    const rawClientIp = Array.isArray(clientIpHeader)
+      ? clientIpHeader[0]
+      : clientIpHeader;
+    const ip =
+      (rawClientIp || '').trim() ||
+      firstForwarded ||
+      req.ip ||
+      req.socket.remoteAddress ||
+      'unknown';
+    const cleanVisitor = (visitorId || '').trim().slice(0, 64);
+    const dedupeIdentity = cleanVisitor ? `v:${cleanVisitor}` : ip;
+    return this.kostsService.recordEngagement(
+      id,
+      type,
+      dedupeIdentity,
+      authUser?.userId ?? null,
+    );
+  }
+
   @Post(':id/report')
   report(
     @Param('id', ParseIntPipe) id: number,

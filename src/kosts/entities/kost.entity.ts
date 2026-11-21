@@ -62,6 +62,12 @@ export class Kost {
   @Column({ type: 'int', default: 0 })
   reviewCount: number;
 
+  @Column({ type: 'int', default: 0 })
+  viewCount: number;
+
+  @Column({ type: 'int', default: 0 })
+  waClickCount: number;
+
   @Column({ type: 'int', default: 3 })
   availableRooms: number;
 
