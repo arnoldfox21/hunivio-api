@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -13,6 +15,8 @@ import { User } from '../users/entities/user.entity';
 import { Kost } from '../kosts/entities/kost.entity';
 import { CreateOwnerPostDto, UpdateOwnerPostDto } from './dto/owner-post.dto';
 import { StorageService } from '../storage/storage.service';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const sharp = require('sharp') as typeof import('sharp').default;
 
 export interface OwnerPostResponse {
   id: number;
@@ -43,6 +47,15 @@ export interface OwnerPostCommentResponse {
 
 @Injectable()
 export class PostsService {
+  private readonly _postRateHits = new Map<
+    number,
+    { count: number; resetAt: number }
+  >();
+  private readonly _commentRateHits = new Map<
+    number,
+    { count: number; resetAt: number; lastText: string }
+  >();
+
   constructor(
     @InjectRepository(OwnerPost)
     private readonly postRepository: Repository<OwnerPost>,
@@ -56,6 +69,91 @@ export class PostsService {
     private readonly kostRepository: Repository<Kost>,
     private readonly storageService: StorageService,
   ) {}
+
+  private _checkPostRateLimit(userId: number): void {
+    const now = Date.now();
+    const entry = this._postRateHits.get(userId);
+    if (!entry || now > entry.resetAt) {
+      this._postRateHits.set(userId, { count: 1, resetAt: now + 60_000 });
+      return;
+    }
+    entry.count += 1;
+    if (entry.count > 5) {
+      throw new HttpException(
+        'Terlalu banyak membuat postingan dalam waktu singkat. Tunggu 1 menit.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private _checkCommentRateLimit(userId: number, text: string): void {
+    const now = Date.now();
+    const entry = this._commentRateHits.get(userId);
+    if (!entry || now > entry.resetAt) {
+      this._commentRateHits.set(userId, {
+        count: 1,
+        resetAt: now + 60_000,
+        lastText: text,
+      });
+      return;
+    }
+    if (entry.lastText === text) {
+      throw new BadRequestException(
+        'Komentar yang sama baru saja dikirim. Hindari mengirim komentar berulang.',
+      );
+    }
+    entry.count += 1;
+    entry.lastText = text;
+    if (entry.count > 6) {
+      throw new HttpException(
+        'Terlalu banyak mengirim komentar dalam waktu singkat. Tunggu 1 menit.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async _resolvePostImageUrl(
+    rawImageUrl?: string | null,
+  ): Promise<string | null> {
+    const trimmed = (rawImageUrl || '').trim();
+    if (!trimmed) return null;
+    if (!/^data:image\//i.test(trimmed)) {
+      return this.storageService.resolvePublicUrl(trimmed);
+    }
+    const base64Data = trimmed.includes(',')
+      ? trimmed.split(',').pop() || ''
+      : trimmed;
+    const buffer = Buffer.from(base64Data, 'base64');
+    if (buffer.length === 0 || buffer.length > 8 * 1024 * 1024) {
+      throw new BadRequestException(
+        'Ukuran gambar postingan tidak valid (maksimal 8 MB).',
+      );
+    }
+    let outputBuffer: Buffer = buffer;
+    let outputExt = 'webp';
+    try {
+      outputBuffer = await sharp(buffer, { limitInputPixels: 100_000_000 })
+        .rotate()
+        .resize({
+          width: 1440,
+          height: 1440,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .webp({ quality: 80, effort: 4 })
+        .toBuffer();
+    } catch {
+      outputBuffer = buffer;
+      outputExt = 'jpg';
+    }
+    const key = this.storageService.buildKostImageKey(outputExt);
+    const uploaded = await this.storageService.uploadBuffer(
+      outputBuffer,
+      key,
+      outputExt === 'webp' ? 'image/webp' : 'image/jpeg',
+    );
+    return uploaded.url;
+  }
 
   private async attachKostMetadata(
     posts: OwnerPost[],
@@ -164,6 +262,12 @@ export class PostsService {
     if (!trimmedContent) {
       throw new BadRequestException('Isi postingan tidak boleh kosong.');
     }
+    if (trimmedContent.length > 3000) {
+      throw new BadRequestException(
+        'Isi postingan maksimal 3.000 karakter.',
+      );
+    }
+    this._checkPostRateLimit(owner.id);
 
     let validKostId: number | null = null;
     if (dto.kostId !== undefined && dto.kostId !== null) {
@@ -178,10 +282,11 @@ export class PostsService {
       validKostId = kost.id;
     }
 
+    const resolvedImageUrl = await this._resolvePostImageUrl(dto.imageUrl);
     const post = this.postRepository.create({
       ownerId: owner.id,
       content: trimmedContent,
-      imageUrl: dto.imageUrl?.trim() || null,
+      imageUrl: resolvedImageUrl,
       kostId: validKostId,
     });
     const saved = await this.postRepository.save(post);
@@ -223,7 +328,7 @@ export class PostsService {
 
     const previousImageUrl = post.imageUrl;
     if (dto.imageUrl !== undefined) {
-      post.imageUrl = dto.imageUrl.trim() || null;
+      post.imageUrl = await this._resolvePostImageUrl(dto.imageUrl);
     }
 
     if (dto.kostId !== undefined) {
@@ -329,6 +434,10 @@ export class PostsService {
     if (!trimmed) {
       throw new BadRequestException('Komentar tidak boleh kosong.');
     }
+    if (trimmed.length > 1000) {
+      throw new BadRequestException('Komentar maksimal 1.000 karakter.');
+    }
+    this._checkCommentRateLimit(userId, trimmed);
     const saved = await this.commentRepository.save(
       this.commentRepository.create({
         postId,

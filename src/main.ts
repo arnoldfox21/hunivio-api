@@ -41,19 +41,45 @@ async function bootstrap() {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
-  // Lightweight per-IP rate limiter helper to prevent overload & abuse
+  // Extract real client IP from proxy headers (x-client-ip / x-forwarded-for) before falling back to socket IP
+  const extractClientIp = (req: express.Request): string => {
+    const clientIpHeader = req.headers['x-client-ip'];
+    const rawClientIp = Array.isArray(clientIpHeader)
+      ? clientIpHeader[0]
+      : clientIpHeader;
+    if (rawClientIp && rawClientIp.trim() && rawClientIp.trim() !== 'unknown') {
+      return rawClientIp.trim();
+    }
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const firstForwarded = Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : typeof forwardedFor === 'string'
+        ? forwardedFor.split(',')[0]?.trim()
+        : undefined;
+    if (firstForwarded && firstForwarded !== 'unknown') {
+      return firstForwarded;
+    }
+    return req.ip || req.socket.remoteAddress || 'unknown';
+  };
+
+  // Lightweight per-IP (or IP+token) rate limiter helper to prevent overload & abuse
   const createIpRateLimiter = (
     windowMs: number,
     maxRequests: number,
     message: string,
+    includeAuthKey = false,
   ): express.RequestHandler => {
     const hits = new Map<string, { count: number; resetAt: number }>();
     return (req, res, next) => {
       const now = Date.now();
-      const ip = req.ip || req.socket.remoteAddress || 'unknown';
-      const entry = hits.get(ip);
+      const ip = extractClientIp(req);
+      const authHeader = includeAuthKey
+        ? String(req.headers.authorization || '').slice(-24)
+        : '';
+      const bucketKey = authHeader ? `${ip}:${authHeader}` : ip;
+      const entry = hits.get(bucketKey);
       if (!entry || now > entry.resetAt) {
-        hits.set(ip, { count: 1, resetAt: now + windowMs });
+        hits.set(bucketKey, { count: 1, resetAt: now + windowMs });
         if (hits.size > 5000) {
           for (const [k, v] of hits) {
             if (now > v.resetAt) hits.delete(k);
@@ -100,17 +126,50 @@ async function bootstrap() {
     60_000,
     12,
     'Terlalu banyak pesan dikirim dalam waktu singkat. Tunggu 1 menit sebelum mengirim lagi.',
+    true,
   );
   const chatSpamPostOnly: express.RequestHandler = (req, res, next) =>
     req.method === 'POST' ? chatSpamLimiter(req, res, next) : next();
   app.use('/api/chats', chatSpamPostOnly);
   app.use('/api/chats/groups/:kostId/messages', chatSpamPostOnly);
+
+  const postWriteLimiter = createIpRateLimiter(
+    60_000,
+    15,
+    'Terlalu banyak pengiriman postingan/komentar dalam waktu singkat. Tunggu 1 menit.',
+    true,
+  );
+  app.use('/api/posts', (req, res, next) =>
+    req.method === 'POST' ? postWriteLimiter(req, res, next) : next(),
+  );
+
+  const bookingWriteLimiter = createIpRateLimiter(
+    60_000,
+    10,
+    'Terlalu banyak pengajuan survei atau booking dalam waktu singkat. Tunggu 1 menit.',
+    true,
+  );
+  app.use('/api/bookings', (req, res, next) =>
+    req.method === 'POST' ? bookingWriteLimiter(req, res, next) : next(),
+  );
+
+  const reviewWriteLimiter = createIpRateLimiter(
+    60_000,
+    10,
+    'Terlalu banyak pengiriman ulasan atau laporan dalam waktu singkat. Tunggu 1 menit.',
+    true,
+  );
+  app.use('/api/reviews', (req, res, next) =>
+    req.method === 'POST' ? reviewWriteLimiter(req, res, next) : next(),
+  );
+
   app.use(
     '/api',
     createIpRateLimiter(
       60_000,
-      240,
+      600,
       'Terlalu banyak permintaan. Coba lagi sebentar.',
+      true,
     ),
   );
   app.use('/api/kosts/upload-image', express.json({ limit: '15mb' }));

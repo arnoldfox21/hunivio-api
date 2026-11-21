@@ -142,9 +142,17 @@ export class ChatsController {
   @Get()
   findMessages(
     @Query('kostId', ParseIntPipe) kostId: number,
-    @Req() req: AuthenticatedRequest,
+    @Query('user2') user2?: string,
+    @Query('peerId') peerId?: string,
+    @Req() req?: AuthenticatedRequest,
   ) {
-    return this.chatsService.findMessages(kostId, req.user.userId);
+    const rawPeer = peerId || user2;
+    const parsedPeer = rawPeer ? parseInt(rawPeer, 10) : undefined;
+    return this.chatsService.findMessages(
+      kostId,
+      req?.user.userId,
+      Number.isFinite(parsedPeer) && parsedPeer! > 0 ? parsedPeer : undefined,
+    );
   }
 
   @Post()
@@ -170,8 +178,17 @@ export class ChatsController {
   @Patch('read')
   markAsRead(
     @Body('kostId', ParseIntPipe) kostId: number,
-    @Req() req: AuthenticatedRequest,
+    @Body('senderId') senderId?: number,
+    @Req() req?: AuthenticatedRequest,
   ) {
-    return this.chatsGateway.emitMarkAsRead(kostId, req.user.userId);
+    const parsedSender =
+      senderId !== undefined && Number.isFinite(Number(senderId)) && Number(senderId) > 0
+        ? Number(senderId)
+        : undefined;
+    return this.chatsGateway.emitMarkAsRead(
+      kostId,
+      req!.user.userId,
+      parsedSender,
+    );
   }
 }

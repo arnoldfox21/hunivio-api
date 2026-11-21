@@ -90,16 +90,27 @@ export class ChatsService {
   async findMessages(
     kostId: number,
     userId?: number,
+    peerId?: number,
   ): Promise<Array<ChatMessage & { booking?: ChatBookingSummary | null }>> {
     if (!userId || userId <= 0) {
       return [];
     }
-    const messages = await this.chatRepository
+    const qb = this.chatRepository
       .createQueryBuilder('msg')
-      .where('msg.kostId = :kostId', { kostId })
-      .andWhere('(msg.senderId = :userId OR msg.receiverId = :userId)', {
+      .where('msg.kostId = :kostId', { kostId });
+
+    if (peerId && peerId > 0 && peerId !== userId) {
+      qb.andWhere(
+        '((msg.senderId = :userId AND msg.receiverId = :peerId) OR (msg.senderId = :peerId AND msg.receiverId = :userId))',
+        { userId, peerId },
+      );
+    } else {
+      qb.andWhere('(msg.senderId = :userId OR msg.receiverId = :userId)', {
         userId,
-      })
+      });
+    }
+
+    const messages = await qb
       .orderBy('msg.createdAt', 'ASC')
       .addOrderBy('msg.id', 'ASC')
       .getMany();
@@ -196,13 +207,19 @@ export class ChatsService {
   async markAsRead(
     kostId: number,
     readerId: number,
+    senderId?: number,
   ): Promise<{ messageIds: number[]; senderIds: number[] }> {
-    const unread = await this.chatRepository
+    const qb = this.chatRepository
       .createQueryBuilder('msg')
       .where('msg.kostId = :kostId', { kostId })
       .andWhere('msg.receiverId = :readerId', { readerId })
-      .andWhere('msg.status != :readStatus', { readStatus: 'READ' })
-      .getMany();
+      .andWhere('msg.status != :readStatus', { readStatus: 'READ' });
+
+    if (senderId && senderId > 0) {
+      qb.andWhere('msg.senderId = :senderId', { senderId });
+    }
+
+    const unread = await qb.getMany();
 
     if (unread.length === 0) {
       return { messageIds: [], senderIds: [] };
