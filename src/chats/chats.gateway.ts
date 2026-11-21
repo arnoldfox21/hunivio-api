@@ -11,6 +11,8 @@ import { ChatsService } from './chats.service';
 import { UsersService } from '../users/users.service';
 import { FirebaseNotificationService } from './firebase-notification.service';
 import { verifyAuthToken } from '../auth/jwt.util';
+import { Optional } from '@nestjs/common';
+import { PlatformService } from '../platform/platform.service';
 
 @WebSocketGateway({
   cors: {
@@ -32,12 +34,19 @@ export class ChatsGateway implements OnGatewayConnection {
     private readonly chatsService: ChatsService,
     private readonly usersService: UsersService,
     private readonly firebaseNotificationService: FirebaseNotificationService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
 
   private _checkWsChatRateLimit(userId: number): boolean {
     const now = Date.now();
     const windowMs = 60_000;
-    const maxMessages = 12;
+    const maxMessages = Math.max(
+      3,
+      Number(
+        this.platformService?.getCachedSettingsSync()?.chatRateLimitPerMin ??
+          12,
+      ),
+    );
     const entry = this._wsChatRateHits.get(userId);
     if (!entry || now > entry.resetAt) {
       this._wsChatRateHits.set(userId, { count: 1, resetAt: now + windowMs });

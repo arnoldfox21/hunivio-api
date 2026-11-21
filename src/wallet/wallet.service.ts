@@ -109,6 +109,7 @@ export class WalletService {
     return {
       freePropertyQuota: cfg?.freePropertyQuota ?? FREE_PROPERTY_QUOTA,
       extraPropertySlotFee: cfg?.extraPropertySlotFee ?? EXTRA_PROPERTY_SLOT_FEE,
+      maxPendingPropertiesPerOwner: cfg?.maxPendingPropertiesPerOwner ?? 10,
       minWithdrawAmount: cfg?.minWithdrawAmount ?? 10000,
       boostPackages: [
         {
@@ -346,7 +347,11 @@ export class WalletService {
       );
     }
 
-    // Anti-spam invoice Midtrans: batasi maksimal 3 transaksi top-up PENDING dalam 24 jam terakhir per user
+    // Anti-spam invoice Midtrans: batasi maksimal tagihan top-up PENDING dalam 24 jam terakhir per user
+    const maxPendingTopups = Math.max(
+      1,
+      Number(cfg?.maxPendingTopupsPerOwner ?? 3),
+    );
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const recentPendingCount = await this.walletRepo
       .createQueryBuilder('tx')
@@ -360,9 +365,9 @@ export class WalletService {
         },
       )
       .getCount();
-    if (recentPendingCount >= 3) {
+    if (recentPendingCount >= maxPendingTopups) {
       throw new BadRequestException(
-        'Anda masih memiliki 3 tagihan top-up yang menunggu pembayaran. Silakan selesaikan pembayaran yang ada terlebih dahulu.',
+        `Anda masih memiliki ${recentPendingCount} tagihan top-up yang menunggu pembayaran (maksimal ${maxPendingTopups}). Silakan selesaikan pembayaran yang ada terlebih dahulu.`,
       );
     }
 

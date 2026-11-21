@@ -19,6 +19,7 @@ import * as express from 'express';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import { PlatformService } from './platform/platform.service';
 
 async function bootstrap() {
   const bootstrapLogger = new NestLogger('Bootstrap');
@@ -62,10 +63,12 @@ async function bootstrap() {
     return req.ip || req.socket.remoteAddress || 'unknown';
   };
 
+  const platformService = app.get(PlatformService, { strict: false });
+
   // Lightweight per-IP (or IP+token) rate limiter helper to prevent overload & abuse
   const createIpRateLimiter = (
     windowMs: number,
-    maxRequests: number,
+    maxRequests: number | (() => number),
     message: string,
     includeAuthKey = false,
   ): express.RequestHandler => {
@@ -88,7 +91,9 @@ async function bootstrap() {
         return next();
       }
       entry.count += 1;
-      if (entry.count > maxRequests) {
+      const limit =
+        typeof maxRequests === 'function' ? maxRequests() : maxRequests;
+      if (entry.count > limit) {
         return res.status(429).json({
           statusCode: 429,
           message,
@@ -124,7 +129,7 @@ async function bootstrap() {
   );
   const chatSpamLimiter = createIpRateLimiter(
     60_000,
-    12,
+    () => platformService?.getCachedSettingsSync()?.chatRateLimitPerMin ?? 12,
     'Terlalu banyak pesan dikirim dalam waktu singkat. Tunggu 1 menit sebelum mengirim lagi.',
     true,
   );

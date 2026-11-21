@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -15,6 +16,7 @@ import { User } from '../users/entities/user.entity';
 import { Kost } from '../kosts/entities/kost.entity';
 import { CreateOwnerPostDto, UpdateOwnerPostDto } from './dto/owner-post.dto';
 import { StorageService } from '../storage/storage.service';
+import { PlatformService } from '../platform/platform.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const sharp = require('sharp') as typeof import('sharp').default;
 
@@ -68,17 +70,24 @@ export class PostsService {
     @InjectRepository(Kost)
     private readonly kostRepository: Repository<Kost>,
     private readonly storageService: StorageService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
 
   private _checkPostRateLimit(userId: number): void {
     const now = Date.now();
+    const maxPosts = Math.max(
+      1,
+      Number(
+        this.platformService?.getCachedSettingsSync()?.postRateLimitPerMin ?? 5,
+      ),
+    );
     const entry = this._postRateHits.get(userId);
     if (!entry || now > entry.resetAt) {
       this._postRateHits.set(userId, { count: 1, resetAt: now + 60_000 });
       return;
     }
     entry.count += 1;
-    if (entry.count > 5) {
+    if (entry.count > maxPosts) {
       throw new HttpException(
         'Terlalu banyak membuat postingan dalam waktu singkat. Tunggu 1 menit.',
         HttpStatus.TOO_MANY_REQUESTS,
@@ -88,6 +97,13 @@ export class PostsService {
 
   private _checkCommentRateLimit(userId: number, text: string): void {
     const now = Date.now();
+    const maxComments = Math.max(
+      1,
+      Number(
+        this.platformService?.getCachedSettingsSync()?.commentRateLimitPerMin ??
+          6,
+      ),
+    );
     const entry = this._commentRateHits.get(userId);
     if (!entry || now > entry.resetAt) {
       this._commentRateHits.set(userId, {
@@ -104,7 +120,7 @@ export class PostsService {
     }
     entry.count += 1;
     entry.lastText = text;
-    if (entry.count > 6) {
+    if (entry.count > maxComments) {
       throw new HttpException(
         'Terlalu banyak mengirim komentar dalam waktu singkat. Tunggu 1 menit.',
         HttpStatus.TOO_MANY_REQUESTS,

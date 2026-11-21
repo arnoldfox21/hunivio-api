@@ -929,9 +929,24 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
     const cfg = await this.platformService?.getSettings().catch(() => null);
     const freeQuota = cfg?.freePropertyQuota ?? FREE_PROPERTY_QUOTA;
     const slotFee = cfg?.extraPropertySlotFee ?? EXTRA_PROPERTY_SLOT_FEE;
+    const maxPendingProperties = Math.max(
+      1,
+      Number(cfg?.maxPendingPropertiesPerOwner ?? 10),
+    );
 
     return this.dataSource.transaction(async (manager) => {
       const kostRepo = manager.getRepository(Kost);
+      if (!isStaffOrAdmin) {
+        const pendingCount = await kostRepo.count({
+          where: { ownerId, approvalStatus: 'PENDING' },
+        });
+        if (pendingCount >= maxPendingProperties) {
+          throw new BadRequestException(
+            `Anda masih memiliki ${pendingCount} properti yang menunggu persetujuan (Pending Approval). Tunggu hingga tim Keyloka meninjau properti Anda sebelum menambahkan properti baru (maksimal ${maxPendingProperties} properti pending).`,
+          );
+        }
+      }
+
       const existingCount = await kostRepo.count({ where: { ownerId } });
 
       if (!isStaffOrAdmin && existingCount >= freeQuota) {

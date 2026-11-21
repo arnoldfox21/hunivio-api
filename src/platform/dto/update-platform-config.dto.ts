@@ -79,4 +79,58 @@ export class UpdatePlatformConfigDto {
   @IsEmail()
   @MaxLength(255)
   opsNotificationEmail?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  maxPendingPropertiesPerOwner?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(3)
+  @Max(120)
+  chatRateLimitPerMin?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  maxActiveSurveysPerUser?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  maxDailySurveysPerUser?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  maxUnpaidBookingsPerUser?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  maxHourlyDirectBookingsPerUser?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  maxPendingTopupsPerOwner?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  postRateLimitPerMin?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  commentRateLimitPerMin?: number;
 }

@@ -53,12 +53,22 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         "updatedAt" timestamp NOT NULL DEFAULT now()
       );
     `);
-    await this.dataSource.query(
-      `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "allowWalletTopup" boolean NOT NULL DEFAULT true;`,
-    );
+    await this.dataSource.query(`
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "allowWalletTopup" boolean NOT NULL DEFAULT true;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "maxPendingPropertiesPerOwner" integer NOT NULL DEFAULT 10;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "chatRateLimitPerMin" integer NOT NULL DEFAULT 12;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "maxActiveSurveysPerUser" integer NOT NULL DEFAULT 5;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "maxDailySurveysPerUser" integer NOT NULL DEFAULT 8;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "maxUnpaidBookingsPerUser" integer NOT NULL DEFAULT 2;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "maxHourlyDirectBookingsPerUser" integer NOT NULL DEFAULT 5;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "maxPendingTopupsPerOwner" integer NOT NULL DEFAULT 3;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "postRateLimitPerMin" integer NOT NULL DEFAULT 5;
+      ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "commentRateLimitPerMin" integer NOT NULL DEFAULT 6;
+    `);
     await this.dataSource.query(
       `INSERT INTO platform_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;`,
     );
+    await this.getSettings().catch(() => null);
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS platform_event_logs (
         id SERIAL PRIMARY KEY,
@@ -114,6 +124,15 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     );
     const res = await this.logRepo.delete({ createdAt: LessThan(cutoff) });
     return res.affected || 0;
+  }
+
+  getCachedSettingsSync(): PlatformSetting | null {
+    if (this._cache && Date.now() >= this._cache.expiresAt && !this._inflight) {
+      void this.getSettings().catch(() => null);
+    } else if (!this._cache && !this._inflight) {
+      void this.getSettings().catch(() => null);
+    }
+    return this._cache?.data ?? null;
   }
 
   async getSettings(): Promise<PlatformSetting> {
@@ -183,6 +202,18 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         dto.opsNotificationEmail.trim().toLowerCase(),
       );
     }
+    applyField('maxPendingPropertiesPerOwner', dto.maxPendingPropertiesPerOwner);
+    applyField('chatRateLimitPerMin', dto.chatRateLimitPerMin);
+    applyField('maxActiveSurveysPerUser', dto.maxActiveSurveysPerUser);
+    applyField('maxDailySurveysPerUser', dto.maxDailySurveysPerUser);
+    applyField('maxUnpaidBookingsPerUser', dto.maxUnpaidBookingsPerUser);
+    applyField(
+      'maxHourlyDirectBookingsPerUser',
+      dto.maxHourlyDirectBookingsPerUser,
+    );
+    applyField('maxPendingTopupsPerOwner', dto.maxPendingTopupsPerOwner);
+    applyField('postRateLimitPerMin', dto.postRateLimitPerMin);
+    applyField('commentRateLimitPerMin', dto.commentRateLimitPerMin);
     row.updatedByUserId = actorUserId;
 
     const saved = await this.settingRepo.save(row);

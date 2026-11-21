@@ -295,12 +295,25 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
             .getCount(),
         ]);
 
+      const cfg = await this.platformService?.getSettings().catch(() => null);
+      const maxActiveSurveys = Math.max(
+        1,
+        Number(cfg?.maxActiveSurveysPerUser ?? 5),
+      );
+      const maxDailySurveys = Math.max(
+        1,
+        Number(cfg?.maxDailySurveysPerUser ?? 8),
+      );
+
       if (sameKost24hCount >= 3) {
         throw new BadRequestException(
           'Anda terlalu sering mengajukan atau membatalkan survei pada properti ini dalam 24 jam terakhir. Silakan coba lagi besok.',
         );
       }
-      if (totalActiveSurveys >= 5 || total24hSurveys >= 8) {
+      if (
+        totalActiveSurveys >= maxActiveSurveys ||
+        total24hSurveys >= maxDailySurveys
+      ) {
         throw new BadRequestException(
           'Anda telah mencapai batas maksimal pengajuan survei aktif/harian. Selesaikan jadwal survei yang ada terlebih dahulu.',
         );
@@ -810,13 +823,21 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         status: In(['MENUNGGU_PEMBAYARAN', 'TERKIRIM']),
       },
     });
-    if (unpaidCount >= 2) {
+    const maxUnpaidBookings = Math.max(
+      1,
+      Number(cfg?.maxUnpaidBookingsPerUser ?? 2),
+    );
+    if (unpaidCount >= maxUnpaidBookings) {
       throw new BadRequestException(
-        'Anda memiliki 2 booking yang belum dibayar. Selesaikan atau batalkan terlebih dahulu.',
+        `Anda memiliki ${unpaidCount} booking yang belum dibayar (maksimal ${maxUnpaidBookings}). Selesaikan atau batalkan terlebih dahulu.`,
       );
     }
 
     // Anti-spam invoice Midtrans: batasi pembuatan transaksi booking berulang (create -> cancel loop) dalam 1 jam terakhir
+    const maxHourlyDirectBookings = Math.max(
+      1,
+      Number(cfg?.maxHourlyDirectBookingsPerUser ?? 5),
+    );
     const since1h = new Date(Date.now() - 60 * 60 * 1000);
     const recentDirectCount = await this.bookingRepository
       .createQueryBuilder('b')
@@ -829,7 +850,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         },
       )
       .getCount();
-    if (recentDirectCount >= 5) {
+    if (recentDirectCount >= maxHourlyDirectBookings) {
       throw new BadRequestException(
         'Terlalu banyak pembuatan transaksi booking dalam 1 jam terakhir. Silakan tunggu sebentar sebelum mencoba lagi.',
       );
