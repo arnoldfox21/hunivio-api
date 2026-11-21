@@ -68,7 +68,7 @@ jobs:
           envs: GITHUB_TOKEN,GITHUB_ACTOR,IMAGE_NAME
           script: |
             set -e
-            cd "${{ secrets.VPS_APP_DIR }}"
+            cd "${{ secrets.VPS_APP_DIR || '/home/ubuntu/apps/keyloka-api' }}"
             git fetch origin main
             git checkout -f main && git pull origin main
             echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin

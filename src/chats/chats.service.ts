@@ -476,25 +476,55 @@ export class ChatsService {
   }
 
   async getGroupDetail(kostId: number, userId: number) {
-    const access = await this.verifyGroupAccess(kostId, userId);
-    const messages = await this.groupMsgRepository.find({
-      where: { kostId, isDeleted: false },
-      order: { createdAt: 'ASC', id: 'ASC' },
-    });
+    if (!userId || userId <= 0) {
+      throw new ForbiddenException('Silakan login untuk mengakses grup penghuni');
+    }
+    const kost = await this.kostRepository.findOne({ where: { id: kostId } });
+    if (!kost) {
+      throw new NotFoundException('Properti tidak ditemukan');
+    }
+    if (!this.isKostCategory(kost.propertyCategory)) {
+      throw new ForbiddenException(
+        'Fitur Grup Penghuni hanya tersedia untuk properti Kost.',
+      );
+    }
+
+    const setting = await this.getOrCreateGroupSetting(kostId);
+    const removed = (setting.removedUserIds || []).filter((id) => id !== '');
+    const added = (setting.addedUserIds || []).filter((id) => id !== '');
+
+    let myRole: 'ADMIN' | 'MEMBER' | 'NONE' = 'NONE';
+    let isMember = false;
+    if (kost.ownerId === userId) {
+      myRole = 'ADMIN';
+      isMember = true;
+    } else if (!removed.includes(String(userId)) && added.includes(String(userId))) {
+      myRole = 'MEMBER';
+      isMember = true;
+    }
+
     const members = await this.getGroupMembers(kostId);
+    const messages = isMember
+      ? await this.groupMsgRepository.find({
+          where: { kostId, isDeleted: false },
+          order: { createdAt: 'ASC', id: 'ASC' },
+        })
+      : [];
 
     return {
       kostId,
-      kostName: access.kost.name,
-      kostImage: access.kost.images?.[0] || '',
-      ownerId: access.kost.ownerId,
-      myRole: access.role,
+      kostName: kost.name,
+      kostImage: kost.images?.[0] || '',
+      ownerId: kost.ownerId,
+      myRole,
+      isMember,
       settings: {
-        pinnedMessageId: access.setting.pinnedMessageId,
-        pinnedText: access.setting.pinnedText,
-        adminOnly: access.setting.adminOnly,
+        pinnedMessageId: isMember ? setting.pinnedMessageId : null,
+        pinnedText: isMember ? setting.pinnedText : null,
+        adminOnly: setting.adminOnly,
       },
-      members,
+      members: isMember ? members : [],
+      memberCount: members.length,
       messages,
     };
   }

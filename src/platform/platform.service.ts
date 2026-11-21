@@ -273,6 +273,41 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     const freeMemMb = Math.round(os.freemem() / (1024 * 1024));
     const usedMemMb = Math.max(0, totalMemMb - freeMemMb);
 
+    const cpus = os.cpus();
+    const cpuCores = Math.max(1, cpus.length);
+    const loadAvg1m = Number(os.loadavg()[0]?.toFixed(2) || 0);
+    const loadAvg5m = Number(os.loadavg()[1]?.toFixed(2) || 0);
+    const loadAvg15m = Number(os.loadavg()[2]?.toFixed(2) || 0);
+    const cpuUsagePercent = Math.min(
+      100,
+      Math.max(0, Math.round((loadAvg1m / cpuCores) * 100)),
+    );
+
+    let diskMetrics = {
+      totalGb: 0,
+      usedGb: 0,
+      freeGb: 0,
+      usagePercent: 0,
+    };
+    try {
+      const statfs = fs.statfsSync(process.cwd());
+      const blockSize = Number(statfs.bsize) || 4096;
+      const totalBytes = Number(statfs.blocks) * blockSize;
+      const availBytes = Number(statfs.bavail ?? statfs.bfree) * blockSize;
+      const usedBytes = Math.max(0, totalBytes - availBytes);
+      const gbDiv = 1024 * 1024 * 1024;
+      const totalGb = Number((totalBytes / gbDiv).toFixed(1));
+      const freeGb = Number((availBytes / gbDiv).toFixed(1));
+      const usedGb = Number((usedBytes / gbDiv).toFixed(1));
+      const usagePercent =
+        totalBytes > 0
+          ? Math.min(100, Math.max(0, Math.round((usedBytes / totalBytes) * 100)))
+          : 0;
+      diskMetrics = { totalGb, usedGb, freeGb, usagePercent };
+    } catch {
+      // Fallback if statfsSync is unavailable
+    }
+
     const credPath =
       process.env.FIREBASE_SERVICE_ACCOUNT_PATH ||
       path.join(process.cwd(), 'firebase-service-account.json');
@@ -323,13 +358,16 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         heapTotal: Math.round(mem.heapTotal / (1024 * 1024)),
       },
       hostMetrics: {
-        cpuCores: os.cpus().length,
-        loadAvg1m: Number(os.loadavg()[0]?.toFixed(2) || 0),
-        loadAvg5m: Number(os.loadavg()[1]?.toFixed(2) || 0),
+        cpuCores,
+        loadAvg1m,
+        loadAvg5m,
+        loadAvg15m,
+        cpuUsagePercent,
         usedMemMb,
         freeMemMb,
         totalMemMb,
       },
+      diskMetrics,
       logsSummary: {
         errorsLast24h: error24hCount,
         warningsLast24h: warn24hCount,

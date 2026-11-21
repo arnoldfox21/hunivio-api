@@ -610,9 +610,7 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
         (k as Kost & { staffWhatsapp?: string }).staffWhatsapp = owner.phone.trim();
       }
       k.isVerified =
-        Boolean(owner?.isVerified) ||
-        ownerRole === 'STAFF' ||
-        ownerRole === 'ADMINISTRATOR';
+        !isStaffPosted && Boolean(owner?.isVerified);
     }
     return kosts;
   }
@@ -966,7 +964,7 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
             dto.ownerPhone?.trim() || creator?.phone?.trim() || '6281234567890',
           slug,
           approvalStatus: isAutoApproved ? 'APPROVED' : 'PENDING',
-          isVerified: isAutoApproved,
+          isVerified: !isStaffOrAdmin && Boolean(creator?.isVerified),
           allowDirectBooking: isAutoApproved
             ? Boolean(dto.allowDirectBooking)
             : false,
