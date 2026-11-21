@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { LoggerModule } from 'nestjs-pino';
 import { Kost } from './kosts/entities/kost.entity';
 import { KostReport } from './kosts/entities/kost-report.entity';
+import { KostDailyStat } from './kosts/entities/kost-daily-stat.entity';
 import { Facility } from './kosts/entities/facility.entity';
 import { UserFavorite } from './kosts/entities/user-favorite.entity';
 import { Booking } from './bookings/entities/booking.entity';
@@ -113,6 +114,7 @@ import { PlatformModule } from './platform/platform.module';
             entities: [
               Kost,
               KostReport,
+              KostDailyStat,
               Facility,
               UserFavorite,
               Booking,
@@ -154,6 +156,7 @@ import { PlatformModule } from './platform/platform.module';
             entities: [
               Kost,
               KostReport,
+              KostDailyStat,
               Facility,
               UserFavorite,
               Booking,

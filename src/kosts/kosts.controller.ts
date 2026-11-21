@@ -165,6 +165,44 @@ export class KostsController {
     return this.kostsService.dismissReport(reportId);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('PEMILIK_KOST', 'STAFF', 'ADMINISTRATOR')
+  @Get('owner/statistics')
+  getOwnerStatistics(
+    @Req() req: AuthenticatedRequest,
+    @Query('period') period?: string,
+    @Query('kostId') kostId?: string,
+  ) {
+    return this.kostsService.getOwnerStatistics(req.user.userId, {
+      period,
+      kostId: kostId ? parseInt(kostId, 10) : undefined,
+    });
+  }
+
+  @Post(':id/track')
+  trackEngagement(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('type') rawType: string,
+    @Req() req: Request,
+  ) {
+    const type = (rawType || '').trim().toUpperCase();
+    if (type !== 'VIEW' && type !== 'WA_CLICK') {
+      throw new BadRequestException('Tipe tracking harus VIEW atau WA_CLICK.');
+    }
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+    const authUser = token ? verifyAuthToken(token) : null;
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    return this.kostsService.recordEngagement(
+      id,
+      type,
+      ip,
+      authUser?.userId ?? null,
+    );
+  }
+
   @Post(':id/report')
   report(
     @Param('id', ParseIntPipe) id: number,
