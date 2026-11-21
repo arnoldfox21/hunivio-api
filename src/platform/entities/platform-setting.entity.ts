@@ -37,6 +37,9 @@ export class PlatformSetting {
   @Column({ type: 'boolean', default: true })
   allowDirectBookingGlobal: boolean;
 
+  @Column({ type: 'boolean', default: true })
+  allowWalletTopup: boolean;
+
   @Column({ type: 'boolean', default: false })
   maintenanceMode: boolean;
 

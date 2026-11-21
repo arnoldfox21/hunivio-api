@@ -54,6 +54,9 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       );
     `);
     await this.dataSource.query(
+      `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS "allowWalletTopup" boolean NOT NULL DEFAULT true;`,
+    );
+    await this.dataSource.query(
       `INSERT INTO platform_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;`,
     );
     await this.dataSource.query(`
@@ -169,6 +172,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     applyField('boost14dPrice', dto.boost14dPrice);
     applyField('allowOwnerRegistration', dto.allowOwnerRegistration);
     applyField('allowDirectBookingGlobal', dto.allowDirectBookingGlobal);
+    applyField('allowWalletTopup', dto.allowWalletTopup);
     applyField('maintenanceMode', dto.maintenanceMode);
     if (dto.maintenanceMessage !== undefined) {
       applyField('maintenanceMessage', dto.maintenanceMessage.trim());

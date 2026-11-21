@@ -63,6 +63,10 @@ export class UpdatePlatformConfigDto {
 
   @IsOptional()
   @IsBoolean()
+  allowWalletTopup?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   maintenanceMode?: boolean;
 
   @IsOptional()

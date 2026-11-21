@@ -339,6 +339,13 @@ export class WalletService {
     }
     this._assertEligibleUser(user);
 
+    const cfg = await this.platformService?.getSettings().catch(() => null);
+    if (cfg && cfg.allowWalletTopup === false) {
+      throw new ForbiddenException(
+        'Top-up saldo kredit sedang dalam masa persiapan/maintenance dan belum dapat digunakan. Silakan coba lagi nanti.',
+      );
+    }
+
     const amount = Math.round(Number(dto.amount));
     const { serverKey, clientKey, snapUrl } = this.midtransConfig;
     const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();

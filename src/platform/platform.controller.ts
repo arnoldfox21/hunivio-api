@@ -64,6 +64,7 @@ export class PlatformPublicController {
       maintenanceMessage: cfg.maintenanceMessage || '',
       allowOwnerRegistration: Boolean(cfg.allowOwnerRegistration),
       allowDirectBookingGlobal: Boolean(cfg.allowDirectBookingGlobal),
+      allowWalletTopup: cfg.allowWalletTopup !== false,
     };
   }
 }
