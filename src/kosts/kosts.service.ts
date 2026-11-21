@@ -482,17 +482,21 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
     switch (query.sortBy) {
       case 'price_asc':
         qb.addSelect(effectivePriceExpr, 'effective_price')
-          .orderBy('effective_price', 'ASC');
+          .orderBy('effective_price', 'ASC')
+          .addOrderBy('kost.id', 'DESC');
         break;
       case 'price_desc':
         qb.addSelect(effectivePriceExpr, 'effective_price')
-          .orderBy('effective_price', 'DESC');
+          .orderBy('effective_price', 'DESC')
+          .addOrderBy('kost.id', 'DESC');
         break;
       case 'rating_desc':
-        qb.orderBy('kost.rating', 'DESC').addOrderBy('kost.reviewCount', 'DESC');
+        qb.orderBy('kost.rating', 'DESC')
+          .addOrderBy('kost.reviewCount', 'DESC')
+          .addOrderBy('kost.id', 'DESC');
         break;
       case 'newest':
-        qb.orderBy('kost.createdAt', 'DESC');
+        qb.orderBy('kost.createdAt', 'DESC').addOrderBy('kost.id', 'DESC');
         break;
       default: {
         const recommendationScoreExpr =
@@ -513,7 +517,9 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
           .orderBy('is_boosted', 'DESC')
           .addOrderBy('kost.boostedUntil', 'DESC', 'NULLS LAST')
           .addOrderBy('has_rooms', 'DESC')
-          .addOrderBy('recommendation_score', 'DESC');
+          .addOrderBy('recommendation_score', 'DESC')
+          .addOrderBy('kost.createdAt', 'DESC')
+          .addOrderBy('kost.id', 'DESC');
         break;
       }
     }
