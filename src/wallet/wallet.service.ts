@@ -109,6 +109,7 @@ export class WalletService {
     return {
       freePropertyQuota: cfg?.freePropertyQuota ?? FREE_PROPERTY_QUOTA,
       extraPropertySlotFee: cfg?.extraPropertySlotFee ?? EXTRA_PROPERTY_SLOT_FEE,
+      maxPendingPropertiesPerOwner: cfg?.maxPendingPropertiesPerOwner ?? 10,
       minWithdrawAmount: cfg?.minWithdrawAmount ?? 10000,
       boostPackages: [
         {
@@ -159,7 +160,7 @@ export class WalletService {
       const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
       const tx = txRepo.create({
         userId: params.userId,
-        orderId: `HNV-USE-${params.userId}-${Date.now()}-${randSuffix}`,
+        orderId: `KYL-USE-${params.userId}-${Date.now()}-${randSuffix}`,
         amount: params.amount,
         type: params.type,
         status: 'PAID',
@@ -346,10 +347,34 @@ export class WalletService {
       );
     }
 
+    // Anti-spam invoice Midtrans: batasi maksimal tagihan top-up PENDING dalam 24 jam terakhir per user
+    const maxPendingTopups = Math.max(
+      1,
+      Number(cfg?.maxPendingTopupsPerOwner ?? 3),
+    );
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentPendingCount = await this.walletRepo
+      .createQueryBuilder('tx')
+      .where(
+        'tx.userId = :userId AND tx.type = :type AND tx.status = :status AND tx.createdAt >= :since',
+        {
+          userId,
+          type: 'TOPUP',
+          status: 'PENDING',
+          since: since24h,
+        },
+      )
+      .getCount();
+    if (recentPendingCount >= maxPendingTopups) {
+      throw new BadRequestException(
+        `Anda masih memiliki ${recentPendingCount} tagihan top-up yang menunggu pembayaran (maksimal ${maxPendingTopups}). Silakan selesaikan pembayaran yang ada terlebih dahulu.`,
+      );
+    }
+
     const amount = Math.round(Number(dto.amount));
     const { serverKey, clientKey, snapUrl } = this.midtransConfig;
     const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
-    const orderId = `HNV-TOPUP-${userId}-${Date.now()}-${randSuffix}`;
+    const orderId = `KYL-TOPUP-${userId}-${Date.now()}-${randSuffix}`;
 
     const webBaseUrl = (
       process.env.WEB_URL ||
@@ -672,7 +697,7 @@ export class WalletService {
       return { ok: true, test: true, orderId };
     }
 
-    if (orderId.startsWith('HNV-BOOK-')) {
+    if (orderId.startsWith('KYL-BOOK-') || orderId.startsWith('HNV-BOOK-')) {
       const updatedBooking =
         await this.bookingsService.applyMidtransWebhookPayment(
           orderId,

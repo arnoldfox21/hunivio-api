@@ -49,6 +49,33 @@ export class PlatformSetting {
   @Column({ type: 'varchar', length: 255, default: '' })
   opsNotificationEmail: string;
 
+  @Column({ type: 'int', default: 10 })
+  maxPendingPropertiesPerOwner: number;
+
+  @Column({ type: 'int', default: 12 })
+  chatRateLimitPerMin: number;
+
+  @Column({ type: 'int', default: 5 })
+  maxActiveSurveysPerUser: number;
+
+  @Column({ type: 'int', default: 8 })
+  maxDailySurveysPerUser: number;
+
+  @Column({ type: 'int', default: 2 })
+  maxUnpaidBookingsPerUser: number;
+
+  @Column({ type: 'int', default: 5 })
+  maxHourlyDirectBookingsPerUser: number;
+
+  @Column({ type: 'int', default: 3 })
+  maxPendingTopupsPerOwner: number;
+
+  @Column({ type: 'int', default: 5 })
+  postRateLimitPerMin: number;
+
+  @Column({ type: 'int', default: 6 })
+  commentRateLimitPerMin: number;
+
   @Column({ type: 'int', nullable: true })
   updatedByUserId: number | null;
 

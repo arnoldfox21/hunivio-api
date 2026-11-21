@@ -26,11 +26,22 @@ import { Roles, RolesGuard } from '../auth/roles.guard';
 import { StorageService } from '../storage/storage.service';
 
 const UPLOAD_RATE_WINDOW_MS = 60_000;
-const UPLOAD_RATE_MAX_REQUESTS = 20;
+const UPLOAD_RATE_MAX_OWNER = 15;
+const UPLOAD_RATE_MAX_TENANT = 3;
 const uploadRateHits = new Map<number, { count: number; resetAt: number }>();
 
-function checkUploadRateLimit(userId: number): void {
+function checkUploadRateLimit(userId: number, role?: string): void {
   const now = Date.now();
+  const upperRole = (role || '').trim().toUpperCase();
+  const isOwnerOrStaff =
+    upperRole === 'PEMILIK_KOST' ||
+    upperRole === 'STAFF' ||
+    upperRole === 'ADMINISTRATOR' ||
+    upperRole === 'PENULIS';
+  const maxAllowed = isOwnerOrStaff
+    ? UPLOAD_RATE_MAX_OWNER
+    : UPLOAD_RATE_MAX_TENANT;
+
   const entry = uploadRateHits.get(userId);
   if (!entry || now > entry.resetAt) {
     uploadRateHits.set(userId, {
@@ -45,7 +56,7 @@ function checkUploadRateLimit(userId: number): void {
     return;
   }
   entry.count += 1;
-  if (entry.count > UPLOAD_RATE_MAX_REQUESTS) {
+  if (entry.count > maxAllowed) {
     throw new HttpException(
       'Terlalu banyak upload gambar. Tunggu 1 menit sebelum mencoba lagi.',
       HttpStatus.TOO_MANY_REQUESTS,
@@ -212,7 +223,7 @@ export class KostsController {
       req.socket.remoteAddress ||
       'unknown';
     const cleanVisitor = (visitorId || '').trim().slice(0, 64);
-    const dedupeIdentity = cleanVisitor ? `v:${cleanVisitor}` : ip;
+    const dedupeIdentity = cleanVisitor ? `${ip}|v:${cleanVisitor}` : ip;
     return this.kostsService.recordEngagement(
       id,
       type,
@@ -279,7 +290,7 @@ export class KostsController {
     body: { base64?: string; filename?: string; mimeType?: string },
     @Req() req: AuthenticatedRequest,
   ) {
-    checkUploadRateLimit(req.user.userId);
+    checkUploadRateLimit(req.user.userId, req.user.role);
     return this.kostsService.uploadBase64Image(body?.base64 || '');
   }
 

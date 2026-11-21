@@ -1112,6 +1112,39 @@ export class UsersService implements OnModuleInit {
       );
     }
 
+    const manager = this.userRepository.manager;
+    const [activeEscrowCount, pendingPayoutCount] = await Promise.all([
+      manager
+        .createQueryBuilder(Booking, 'b')
+        .where('(b.userId = :id OR b.ownerId = :id)', { id })
+        .andWhere('b.escrowStatus IN (:...statuses)', {
+          statuses: ['HELD', 'DISPUTED'],
+        })
+        .getCount(),
+      manager.count(PayoutRequest, {
+        where: { userId: id, status: 'PENDING' },
+      }),
+    ]);
+
+    if (activeEscrowCount > 0) {
+      throw new BadRequestException(
+        'Akun tidak dapat dihapus karena masih memiliki transaksi Escrow yang sedang ditahan atau dalam sengketa.',
+      );
+    }
+    if (pendingPayoutCount > 0) {
+      throw new BadRequestException(
+        'Akun tidak dapat dihapus karena masih memiliki pengajuan penarikan dana (withdraw) yang sedang diproses.',
+      );
+    }
+    if (
+      (!requesterId || requesterId === id) &&
+      Number(user.payoutBalance ?? 0) > 0
+    ) {
+      throw new BadRequestException(
+        'Akun Anda masih memiliki saldo penghasilan sewa yang belum ditarik. Silakan tarik dana terlebih dahulu sebelum menghapus akun.',
+      );
+    }
+
     const imagesToDelete = new Set<string>();
     if (user.avatarUrl) imagesToDelete.add(user.avatarUrl);
     if (user.coverUrl) imagesToDelete.add(user.coverUrl);

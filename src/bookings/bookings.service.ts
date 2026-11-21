@@ -264,6 +264,62 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    // Anti-spam survei: cegah loop Submit -> Cancel -> Submit pada kost yang sama & batasi kuota survei harian per user
+    if (dto.userId && dto.userId > 0) {
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const [sameKost24hCount, totalActiveSurveys, total24hSurveys] =
+        await Promise.all([
+          this.bookingRepository
+            .createQueryBuilder('b')
+            .where('b.userId = :uid AND b.kostId = :kid AND b.bookingType = :t AND b.createdAt >= :since', {
+              uid: dto.userId,
+              kid: dto.kostId,
+              t: type,
+              since: since24h,
+            })
+            .getCount(),
+          this.bookingRepository.count({
+            where: {
+              userId: dto.userId,
+              bookingType: type,
+              status: In(ongoingStatuses),
+            },
+          }),
+          this.bookingRepository
+            .createQueryBuilder('b')
+            .where('b.userId = :uid AND b.bookingType = :t AND b.createdAt >= :since', {
+              uid: dto.userId,
+              t: type,
+              since: since24h,
+            })
+            .getCount(),
+        ]);
+
+      const cfg = await this.platformService?.getSettings().catch(() => null);
+      const maxActiveSurveys = Math.max(
+        1,
+        Number(cfg?.maxActiveSurveysPerUser ?? 5),
+      );
+      const maxDailySurveys = Math.max(
+        1,
+        Number(cfg?.maxDailySurveysPerUser ?? 8),
+      );
+
+      if (sameKost24hCount >= 3) {
+        throw new BadRequestException(
+          'Anda terlalu sering mengajukan atau membatalkan survei pada properti ini dalam 24 jam terakhir. Silakan coba lagi besok.',
+        );
+      }
+      if (
+        totalActiveSurveys >= maxActiveSurveys ||
+        total24hSurveys >= maxDailySurveys
+      ) {
+        throw new BadRequestException(
+          'Anda telah mencapai batas maksimal pengajuan survei aktif/harian. Selesaikan jadwal survei yang ada terlebih dahulu.',
+        );
+      }
+    }
+
     const resolvedSchedule = this._resolveScheduleLabel(
       dto.startDate,
       dto.surveyDateTime,
@@ -447,6 +503,42 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
 
     booking.status = nextStatus;
     const saved = await this.bookingRepository.save(booking);
+
+    // Kembalikan kuota kamar (availableRooms + 1) saat masa sewa berbayar berakhir (SELESAI)
+    const activeRentStatuses = new Set([
+      'DIBAYAR',
+      'DISETUJUI',
+      'APPROVED',
+      'AKTIF',
+    ]);
+    if (
+      (booking.bookingType || '').toUpperCase() === 'SEWA' &&
+      booking.paymentStatus === 'PAID' &&
+      booking.escrowStatus !== 'REFUNDED' &&
+      activeRentStatuses.has(prevStatus) &&
+      nextStatus === 'SELESAI'
+    ) {
+      await this.dataSource
+        .transaction(async (manager) => {
+          const kostRepo = manager.getRepository(Kost);
+          const lockedKost = await kostRepo.findOne({
+            where: { id: booking.kostId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (lockedKost) {
+            lockedKost.availableRooms = Math.max(
+              0,
+              Number(lockedKost.availableRooms ?? 0) + 1,
+            );
+            await kostRepo.save(lockedKost);
+          }
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `Gagal mengembalikan availableRooms untuk kostId=${booking.kostId}: ${err instanceof Error ? err.message : err}`,
+          );
+        });
+    }
 
     if (
       prevStatus !== nextStatus &&
@@ -731,9 +823,36 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         status: In(['MENUNGGU_PEMBAYARAN', 'TERKIRIM']),
       },
     });
-    if (unpaidCount >= 2) {
+    const maxUnpaidBookings = Math.max(
+      1,
+      Number(cfg?.maxUnpaidBookingsPerUser ?? 2),
+    );
+    if (unpaidCount >= maxUnpaidBookings) {
       throw new BadRequestException(
-        'Anda memiliki 2 booking yang belum dibayar. Selesaikan atau batalkan terlebih dahulu.',
+        `Anda memiliki ${unpaidCount} booking yang belum dibayar (maksimal ${maxUnpaidBookings}). Selesaikan atau batalkan terlebih dahulu.`,
+      );
+    }
+
+    // Anti-spam invoice Midtrans: batasi pembuatan transaksi booking berulang (create -> cancel loop) dalam 1 jam terakhir
+    const maxHourlyDirectBookings = Math.max(
+      1,
+      Number(cfg?.maxHourlyDirectBookingsPerUser ?? 5),
+    );
+    const since1h = new Date(Date.now() - 60 * 60 * 1000);
+    const recentDirectCount = await this.bookingRepository
+      .createQueryBuilder('b')
+      .where(
+        'b.userId = :uid AND b.bookingType = :t AND b.createdAt >= :since',
+        {
+          uid: params.userId,
+          t: 'SEWA',
+          since: since1h,
+        },
+      )
+      .getCount();
+    if (recentDirectCount >= maxHourlyDirectBookings) {
+      throw new BadRequestException(
+        'Terlalu banyak pembuatan transaksi booking dalam 1 jam terakhir. Silakan tunggu sebentar sebelum mencoba lagi.',
       );
     }
 
@@ -746,6 +865,52 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       1,
       Math.min(maxDuration, Math.round(Number(params.durationCount) || 1)),
     );
+
+    // Pengecekan bentrok tanggal (check-in s/d check-out) khusus HUNIAN_HARIAN (Villa / Homestay)
+    if (isDaily) {
+      const parseUtcDayMs = (dateStr: string): number | null => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((dateStr || '').trim());
+        if (!m) return null;
+        const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        return Number.isFinite(ms) ? ms : null;
+      };
+      const reqStartMs = parseUtcDayMs(params.startDate);
+      if (reqStartMs !== null) {
+        const reqEndMs = reqStartMs + durationCount * 86_400_000;
+        const activeDailyBookings = await this.bookingRepository.find({
+          where: {
+            kostId: params.kostId,
+            bookingType: 'SEWA',
+            paymentStatus: 'PAID',
+            status: In(['DIBAYAR', 'DISETUJUI', 'APPROVED', 'AKTIF']),
+          },
+        });
+        let overlappingCount = 0;
+        for (const ab of activeDailyBookings) {
+          if (ab.escrowStatus === 'REFUNDED') continue;
+          const bStartMs = parseUtcDayMs(ab.startDate);
+          if (bStartMs === null) continue;
+          const bDays = Math.max(1, Number(ab.durationCount) || 1);
+          const bEndMs = bStartMs + bDays * 86_400_000;
+          if (bStartMs < reqEndMs && bEndMs > reqStartMs) {
+            overlappingCount += 1;
+          }
+        }
+        // Saat booking PAID, availableRooms sudah dikurangi 1, sehingga total kapasitas unit aktif = availableRooms + activeDailyBookings.length
+        const activePaidCount = activeDailyBookings.filter(
+          (ab) => ab.escrowStatus !== 'REFUNDED',
+        ).length;
+        const totalUnitCapacity = Math.max(
+          1,
+          Number(kost.availableRooms ?? 0) + activePaidCount,
+        );
+        if (overlappingCount >= totalUnitCapacity) {
+          throw new BadRequestException(
+            'Tanggal check-in hingga check-out yang dipilih sudah penuh/terisi untuk hunian harian ini. Silakan pilih tanggal lain.',
+          );
+        }
+      }
+    }
     const unitPrice =
       isDaily && (kost.pricePerDay ?? 0) > 0
         ? Number(kost.pricePerDay)
@@ -798,7 +963,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const ownerNetAmount = Math.max(0, payableRent - basePlatformFee - serviceFee);
 
     const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
-    const paymentOrderId = `HNV-BOOK-${params.userId}-${Date.now()}-${randSuffix}`;
+    const paymentOrderId = `KYL-BOOK-${params.userId}-${Date.now()}-${randSuffix}`;
 
     const unitLabel = isDaily ? 'Hari' : isYearly ? 'Tahun' : 'Bulan';
     const schemeLabel = effectiveScheme === 'DP' ? 'DP 30%' : 'Full';

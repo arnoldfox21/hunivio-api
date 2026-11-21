@@ -11,6 +11,8 @@ import { ChatsService } from './chats.service';
 import { UsersService } from '../users/users.service';
 import { FirebaseNotificationService } from './firebase-notification.service';
 import { verifyAuthToken } from '../auth/jwt.util';
+import { Optional } from '@nestjs/common';
+import { PlatformService } from '../platform/platform.service';
 
 @WebSocketGateway({
   cors: {
@@ -23,11 +25,41 @@ export class ChatsGateway implements OnGatewayConnection {
   @WebSocketServer()
   server: Server;
 
+  private readonly _wsChatRateHits = new Map<
+    number,
+    { count: number; resetAt: number }
+  >();
+
   constructor(
     private readonly chatsService: ChatsService,
     private readonly usersService: UsersService,
     private readonly firebaseNotificationService: FirebaseNotificationService,
+    @Optional() private readonly platformService?: PlatformService,
   ) {}
+
+  private _checkWsChatRateLimit(userId: number): boolean {
+    const now = Date.now();
+    const windowMs = 60_000;
+    const maxMessages = Math.max(
+      3,
+      Number(
+        this.platformService?.getCachedSettingsSync()?.chatRateLimitPerMin ??
+          12,
+      ),
+    );
+    const entry = this._wsChatRateHits.get(userId);
+    if (!entry || now > entry.resetAt) {
+      this._wsChatRateHits.set(userId, { count: 1, resetAt: now + windowMs });
+      if (this._wsChatRateHits.size > 3000) {
+        for (const [k, v] of this._wsChatRateHits) {
+          if (now > v.resetAt) this._wsChatRateHits.delete(k);
+        }
+      }
+      return true;
+    }
+    entry.count += 1;
+    return entry.count <= maxMessages;
+  }
 
   async handleConnection(client: Socket) {
     try {
@@ -83,7 +115,7 @@ export class ChatsGateway implements OnGatewayConnection {
         status: 'DELIVERED',
         messageIds: g.messageIds,
       };
-      this.server.to(`kost_${g.kostId}`).emit('messageStatusUpdated', updateEvent);
+      this.server.to(`user_${userId}`).emit('messageStatusUpdated', updateEvent);
       this.server.to(`user_${g.senderId}`).emit('messageStatusUpdated', updateEvent);
     }
 
@@ -93,41 +125,37 @@ export class ChatsGateway implements OnGatewayConnection {
   @SubscribeMessage('joinKostChat')
   async handleJoinRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { kostId: number; userId?: number },
+    @MessageBody() payload: { kostId: number; userId?: number; peerId?: number },
   ) {
     const userId = this._getSocketUserId(client);
     if (!userId || !payload?.kostId) return { joined: false };
-    client.join(`kost_${payload.kostId}`);
     client.join(`user_${userId}`);
-    await this.emitMarkAsRead(payload.kostId, userId);
-    return { joined: true, room: `kost_${payload.kostId}` };
+    await this.emitMarkAsRead(payload.kostId, userId, payload.peerId);
+    return { joined: true, room: `user_${userId}` };
   }
 
   @SubscribeMessage('leaveKostChat')
   handleLeaveRoom(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { kostId: number },
+    @ConnectedSocket() _client: Socket,
+    @MessageBody() _payload: { kostId: number },
   ) {
-    if (payload?.kostId) {
-      client.leave(`kost_${payload.kostId}`);
-    }
     return { left: true };
   }
 
   @SubscribeMessage('markAsRead')
   async handleMarkAsRead(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { kostId: number; readerId?: number },
+    @MessageBody() payload: { kostId: number; readerId?: number; senderId?: number },
   ) {
     const readerId = this._getSocketUserId(client);
     if (!payload?.kostId || !readerId) {
       return { updated: false };
     }
-    return this.emitMarkAsRead(payload.kostId, readerId);
+    return this.emitMarkAsRead(payload.kostId, readerId, payload.senderId);
   }
 
-  async emitMarkAsRead(kostId: number, readerId: number) {
-    const res = await this.chatsService.markAsRead(kostId, readerId);
+  async emitMarkAsRead(kostId: number, readerId: number, senderId?: number) {
+    const res = await this.chatsService.markAsRead(kostId, readerId, senderId);
     if (res.messageIds.length > 0) {
       const event = {
         kostId,
@@ -135,7 +163,7 @@ export class ChatsGateway implements OnGatewayConnection {
         status: 'READ',
         messageIds: res.messageIds,
       };
-      this.server.to(`kost_${kostId}`).emit('messageStatusUpdated', event);
+      this.server.to(`user_${readerId}`).emit('messageStatusUpdated', event);
       for (const sid of res.senderIds) {
         this.server.to(`user_${sid}`).emit('messageStatusUpdated', event);
       }
@@ -158,6 +186,13 @@ export class ChatsGateway implements OnGatewayConnection {
   ) {
     const senderId = this._getSocketUserId(client);
     if (!senderId) return null;
+    if (!this._checkWsChatRateLimit(senderId)) {
+      return {
+        error:
+          'Terlalu banyak pesan dikirim dalam waktu singkat. Tunggu 1 menit sebelum mengirim lagi.',
+        statusCode: 429,
+      };
+    }
     const saved = await this.chatsService.createMessage({
       ...payload,
       senderId,
@@ -186,8 +221,11 @@ export class ChatsGateway implements OnGatewayConnection {
       if (updated) latest = updated;
     }
 
-    this.server.to(`kost_${saved.kostId}`).emit('newMessage', latest);
-    this.server.to(`user_${saved.receiverId}`).emit('newMessage', latest);
+    // Hanya kirim ke pengirim dan penerima (cegah kebocoran pesan antar penyewa di kost yang sama)
+    this.server.to(`user_${saved.senderId}`).emit('newMessage', latest);
+    if (saved.receiverId !== saved.senderId) {
+      this.server.to(`user_${saved.receiverId}`).emit('newMessage', latest);
+    }
     const inboxPayload = {
       kostId: saved.kostId,
       senderId: saved.senderId,
@@ -261,6 +299,13 @@ export class ChatsGateway implements OnGatewayConnection {
   ) {
     const senderId = this._getSocketUserId(client);
     if (!senderId) return null;
+    if (!this._checkWsChatRateLimit(senderId)) {
+      return {
+        error:
+          'Terlalu banyak pesan dikirim dalam waktu singkat. Tunggu 1 menit sebelum mengirim lagi.',
+        statusCode: 429,
+      };
+    }
     const saved = await this.chatsService.createGroupMessage({
       ...payload,
       senderId,

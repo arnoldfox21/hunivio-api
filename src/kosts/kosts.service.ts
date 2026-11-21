@@ -929,9 +929,24 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
     const cfg = await this.platformService?.getSettings().catch(() => null);
     const freeQuota = cfg?.freePropertyQuota ?? FREE_PROPERTY_QUOTA;
     const slotFee = cfg?.extraPropertySlotFee ?? EXTRA_PROPERTY_SLOT_FEE;
+    const maxPendingProperties = Math.max(
+      1,
+      Number(cfg?.maxPendingPropertiesPerOwner ?? 10),
+    );
 
     return this.dataSource.transaction(async (manager) => {
       const kostRepo = manager.getRepository(Kost);
+      if (!isStaffOrAdmin) {
+        const pendingCount = await kostRepo.count({
+          where: { ownerId, approvalStatus: 'PENDING' },
+        });
+        if (pendingCount >= maxPendingProperties) {
+          throw new BadRequestException(
+            `Anda masih memiliki ${pendingCount} properti yang menunggu persetujuan (Pending Approval). Tunggu hingga tim Keyloka meninjau properti Anda sebelum menambahkan properti baru (maksimal ${maxPendingProperties} properti pending).`,
+          );
+        }
+      }
+
       const existingCount = await kostRepo.count({ where: { ownerId } });
 
       if (!isStaffOrAdmin && existingCount >= freeQuota) {
@@ -1282,6 +1297,26 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
 
   async remove(id: number): Promise<{ deleted: boolean; id: number }> {
     const kost = await this.findOne(id);
+    const bookingRepo = this.dataSource.getRepository(Booking);
+    const activeEscrowOrPaidCount = await bookingRepo.count({
+      where: [
+        {
+          kostId: id,
+          escrowStatus: In(['HELD', 'DISPUTED']),
+        },
+        {
+          kostId: id,
+          bookingType: 'SEWA',
+          paymentStatus: 'PAID',
+          status: In(['DIBAYAR', 'DISETUJUI', 'APPROVED', 'AKTIF']),
+        },
+      ],
+    });
+    if (activeEscrowOrPaidCount > 0) {
+      throw new BadRequestException(
+        'Properti tidak dapat dihapus karena masih memiliki transaksi sewa aktif atau dana Escrow yang sedang ditahan/bersengketa.',
+      );
+    }
     const imagesToDelete = Array.isArray(kost.images) ? [...kost.images] : [];
     await this.kostRepository.remove(kost);
     this._filtersCache.clear();
@@ -1582,12 +1617,16 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
 
     const now = Date.now();
     const ttlMs = type === 'VIEW' ? 10 * 60_000 : 2 * 60_000;
+    const baseIp = (viewerIp || 'anon').split('|')[0]?.trim() || 'anon';
+    const ipKey = `${type}:${kostId}:ip:${baseIp}`;
     const dedupeKey = `${type}:${kostId}:${viewerUserId || viewerIp || 'anon'}`;
     const exp = this._engagementDedupe.get(dedupeKey);
-    if (exp && now < exp) {
+    const ipExp = this._engagementDedupe.get(ipKey);
+    if ((exp && now < exp) || (ipExp && now < ipExp)) {
       return { counted: false };
     }
     this._engagementDedupe.set(dedupeKey, now + ttlMs);
+    this._engagementDedupe.set(ipKey, now + ttlMs);
     if (this._engagementDedupe.size > 10_000) {
       for (const [k, v] of this._engagementDedupe) {
         if (now >= v) this._engagementDedupe.delete(k);

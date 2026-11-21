@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Review } from './entities/review.entity';
 import { ReviewReport } from './entities/review-report.entity';
+import { Booking } from '../bookings/entities/booking.entity';
 import { KostsService } from '../kosts/kosts.service';
 import { FirebaseNotificationService } from '../chats/firebase-notification.service';
 import { UsersService } from '../users/users.service';
@@ -19,6 +20,8 @@ export class ReviewsService {
     private readonly reviewRepository: Repository<Review>,
     @InjectRepository(ReviewReport)
     private readonly reviewReportRepository: Repository<ReviewReport>,
+    @InjectRepository(Booking)
+    private readonly bookingRepository: Repository<Booking>,
     private readonly kostsService: KostsService,
     private readonly firebaseNotificationService: FirebaseNotificationService,
     private readonly usersService: UsersService,
@@ -99,6 +102,37 @@ export class ReviewsService {
       );
     }
 
+    let resolvedName = payload.userName || 'Penghuni';
+    let resolvedAvatar = payload.userAvatar || '';
+    let authorRole = 'PENYEWA';
+    try {
+      const author = await this.usersService.findOne(payload.userId);
+      if (author.name && author.name.trim()) resolvedName = author.name.trim();
+      if (author.avatarUrl && author.avatarUrl.trim()) {
+        resolvedAvatar = author.avatarUrl.trim();
+      }
+      if (author.role) {
+        authorRole = author.role.trim().toUpperCase();
+      }
+    } catch (_) {}
+
+    const isStaffOrAdmin =
+      authorRole === 'STAFF' || authorRole === 'ADMINISTRATOR';
+    if (!isStaffOrAdmin) {
+      const verifiedHistory = await this.bookingRepository.findOne({
+        where: {
+          kostId: payload.kostId,
+          userId: payload.userId,
+          status: In(['DISETUJUI', 'APPROVED', 'DIBAYAR', 'AKTIF', 'SELESAI']),
+        },
+      });
+      if (!verifiedHistory) {
+        throw new ForbiddenException(
+          'Hanya pengguna yang pernah melakukan survei yang disetujui atau menyewa properti ini yang dapat memberikan ulasan.',
+        );
+      }
+    }
+
     const overallRating = Number(
       (
         (payload.ratingCleanliness +
@@ -107,16 +141,6 @@ export class ReviewsService {
         3
       ).toFixed(1),
     );
-
-    let resolvedName = payload.userName || 'Penghuni';
-    let resolvedAvatar = payload.userAvatar || '';
-    try {
-      const author = await this.usersService.findOne(payload.userId);
-      if (author.name && author.name.trim()) resolvedName = author.name.trim();
-      if (author.avatarUrl && author.avatarUrl.trim()) {
-        resolvedAvatar = author.avatarUrl.trim();
-      }
-    } catch (_) {}
 
     const review = this.reviewRepository.create({
       kostId: payload.kostId,
