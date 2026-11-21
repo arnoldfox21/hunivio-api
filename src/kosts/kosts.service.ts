@@ -1676,22 +1676,35 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
     );
 
     const now = new Date();
+    const wibOffsetMs = 7 * 60 * 60 * 1000;
+    const wibNow = new Date(now.getTime() + wibOffsetMs);
     const dailyDays = 30;
-    const dailyStart = new Date(now);
-    dailyStart.setDate(dailyStart.getDate() - (dailyDays - 1));
-    const dailyStartStr = new Date(dailyStart.getTime() + 7 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
+    const dailyStartWib = new Date(
+      Date.UTC(
+        wibNow.getUTCFullYear(),
+        wibNow.getUTCMonth(),
+        wibNow.getUTCDate() - (dailyDays - 1),
+      ),
+    );
+    const dailyStartStr = dailyStartWib.toISOString().slice(0, 10);
 
     const monthsCount = period === '12M' ? 12 : 6;
     let bookingCutoff: Date | null = null;
     if (period === '30D') {
-      bookingCutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      bookingCutoff = new Date(
+        Date.UTC(
+          wibNow.getUTCFullYear(),
+          wibNow.getUTCMonth(),
+          wibNow.getUTCDate() - 29,
+        ) - wibOffsetMs,
+      );
     } else if (period === '6M' || period === '12M') {
       bookingCutoff = new Date(
-        now.getFullYear(),
-        now.getMonth() - (monthsCount - 1),
-        1,
+        Date.UTC(
+          wibNow.getUTCFullYear(),
+          wibNow.getUTCMonth() - (monthsCount - 1),
+          1,
+        ) - wibOffsetMs,
       );
     }
 
@@ -1886,17 +1899,21 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
       waClicks: number;
     }> = [];
     for (let i = dailyDays - 1; i >= 0; i -= 1) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const iso = new Date(d.getTime() + 7 * 60 * 60 * 1000)
-        .toISOString()
-        .slice(0, 10);
+      const wibDay = new Date(
+        Date.UTC(
+          wibNow.getUTCFullYear(),
+          wibNow.getUTCMonth(),
+          wibNow.getUTCDate() - i,
+        ),
+      );
+      const iso = wibDay.toISOString().slice(0, 10);
       const found = dailyMap.get(iso);
       dailyEngagement.push({
         date: iso,
-        label: d.toLocaleDateString('id-ID', {
+        label: wibDay.toLocaleDateString('id-ID', {
           day: 'numeric',
           month: 'short',
+          timeZone: 'UTC',
         }),
         views: Number(found?.views ?? 0),
         waClicks: Number(found?.waClicks ?? 0),
@@ -1914,14 +1931,17 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
     }> = [];
     const trendMonths = period === 'ALL' ? Math.max(6, monthlyRows.length) : monthsCount;
     for (let i = trendMonths - 1; i >= 0; i -= 1) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const wibMonth = new Date(
+        Date.UTC(wibNow.getUTCFullYear(), wibNow.getUTCMonth() - i, 1),
+      );
+      const key = `${wibMonth.getUTCFullYear()}-${String(wibMonth.getUTCMonth() + 1).padStart(2, '0')}`;
       const found = monthlyMap.get(key);
       monthlyTrend.push({
         key,
-        label: d.toLocaleDateString('id-ID', {
+        label: wibMonth.toLocaleDateString('id-ID', {
           month: 'short',
           year: '2-digit',
+          timeZone: 'UTC',
         }),
         surveys: Number(found?.surveys ?? 0),
         directBookings: Number(found?.direct_bookings ?? 0),
