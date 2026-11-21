@@ -153,9 +153,9 @@ export class UsersService implements OnModuleInit {
       coverUrl: user.coverUrl,
       role: user.role,
       roles: this._getEffectiveRoles(user),
-      isVerified: Boolean(user.isVerified) || isStaffOrAdmin,
+      isVerified: !isStaffOrAdmin && Boolean(user.isVerified),
       verificationStatus: isStaffOrAdmin
-        ? 'VERIFIED'
+        ? 'NONE'
         : user.verificationStatus || (user.isVerified ? 'VERIFIED' : 'NONE'),
       showWhatsapp: Boolean(user.showWhatsapp),
       isBanned: Boolean(user.isBanned),
