@@ -183,6 +183,7 @@ export class KostsController {
   trackEngagement(
     @Param('id', ParseIntPipe) id: number,
     @Body('type') rawType: string,
+    @Body('visitorId') visitorId: string | undefined,
     @Req() req: Request,
   ) {
     const type = (rawType || '').trim().toUpperCase();
@@ -194,11 +195,28 @@ export class KostsController {
       ? authHeader.slice(7).trim()
       : '';
     const authUser = token ? verifyAuthToken(token) : null;
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const firstForwarded = Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : typeof forwardedFor === 'string'
+        ? forwardedFor.split(',')[0]?.trim()
+        : undefined;
+    const clientIpHeader = req.headers['x-client-ip'];
+    const rawClientIp = Array.isArray(clientIpHeader)
+      ? clientIpHeader[0]
+      : clientIpHeader;
+    const ip =
+      (rawClientIp || '').trim() ||
+      firstForwarded ||
+      req.ip ||
+      req.socket.remoteAddress ||
+      'unknown';
+    const cleanVisitor = (visitorId || '').trim().slice(0, 64);
+    const dedupeIdentity = cleanVisitor ? `v:${cleanVisitor}` : ip;
     return this.kostsService.recordEngagement(
       id,
       type,
-      ip,
+      dedupeIdentity,
       authUser?.userId ?? null,
     );
   }

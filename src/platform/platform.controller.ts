@@ -51,3 +51,19 @@ export class PlatformController {
     });
   }
 }
+
+@Controller('platform')
+export class PlatformPublicController {
+  constructor(private readonly platformService: PlatformService) {}
+
+  @Get('status')
+  async getPublicStatus() {
+    const cfg = await this.platformService.getSettings();
+    return {
+      maintenanceMode: Boolean(cfg.maintenanceMode),
+      maintenanceMessage: cfg.maintenanceMessage || '',
+      allowOwnerRegistration: Boolean(cfg.allowOwnerRegistration),
+      allowDirectBookingGlobal: Boolean(cfg.allowDirectBookingGlobal),
+    };
+  }
+}

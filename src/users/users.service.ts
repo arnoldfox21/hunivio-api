@@ -640,6 +640,15 @@ export class UsersService implements OnModuleInit {
       );
     }
 
+    if (finalRoles.includes('PEMILIK_KOST')) {
+      const cfg = await this.platformService?.getSettings().catch(() => null);
+      if (cfg && cfg.allowOwnerRegistration === false) {
+        throw new ForbiddenException(
+          'Pendaftaran sebagai pemilik properti sedang ditutup sementara oleh administrator.',
+        );
+      }
+    }
+
     user.role = activeRole;
     user.roles = finalRoles;
     if (dto.preferredCategory !== undefined) {
@@ -690,6 +699,14 @@ export class UsersService implements OnModuleInit {
       throw new BadRequestException(
         'Peran tambahan harus Penyewa atau Pemilik Properti.',
       );
+    }
+    if (targetRole === 'PEMILIK_KOST') {
+      const cfg = await this.platformService?.getSettings().catch(() => null);
+      if (cfg && cfg.allowOwnerRegistration === false) {
+        throw new ForbiddenException(
+          'Pendaftaran sebagai pemilik properti sedang ditutup sementara oleh administrator.',
+        );
+      }
     }
 
     const rawPhone =

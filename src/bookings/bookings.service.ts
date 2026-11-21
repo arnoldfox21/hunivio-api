@@ -1559,7 +1559,14 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    if (!owner?.email) {
+    const cfg = await this.platformService?.getSettings().catch(() => null);
+    const opsEmail = (cfg?.opsNotificationEmail || '').trim();
+    const ownerRole = (owner?.role || '').toUpperCase();
+    const isStaffOwner = ownerRole === 'STAFF' || ownerRole === 'ADMINISTRATOR';
+    const recipientOwnerEmail =
+      (isStaffOwner && opsEmail) || owner?.email || opsEmail || '';
+
+    if (!recipientOwnerEmail) {
       this.logger.warn(
         `Email pemilik dilewati untuk bookingId=${booking.id} kostId=${kost.id} ownerId=${kost.ownerId}: email pemilik kosong`,
       );
@@ -1569,13 +1576,13 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         message: `Email pemilik dilewati untuk booking #${booking.id} (${kost.name}): email kosong`,
         meta: { bookingId: booking.id, kostId: kost.id, ownerId: kost.ownerId },
       });
-    } else if (owner.id !== tenant?.id) {
-      await this.mailService?.sendEmail(owner.email, {
+    } else if (owner?.id !== tenant?.id || recipientOwnerEmail !== tenant?.email) {
+      await this.mailService?.sendEmail(recipientOwnerEmail, {
         subject: `[Keyloka] Booking Baru Dibayar • ${kost.name}`,
         badgeText: 'Booking Dibayar',
         badgeTone: 'emerald',
         title: 'Ada Booking Baru yang Sudah Dibayar',
-        greetingName: owner.name,
+        greetingName: owner?.name || 'Tim Operasional Keyloka',
         intro:
           'Penyewa telah menyelesaikan pembayaran. Dana ditahan aman di Escrow dan akan diteruskan ke saldo penghasilan Anda setelah penyewa check-in.',
         details: [

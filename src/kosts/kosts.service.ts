@@ -1738,6 +1738,7 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
 
     const [
       dailyRows,
+      periodEngagementRows,
       favoriteRows,
       chatCountRow,
       bookingSummaryRows,
@@ -1755,6 +1756,22 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
         `,
         [kostIds, dailyStartStr],
       ) as Promise<Array<{ date: string; views: number; waClicks: number }>>,
+      bookingCutoff
+        ? (this.dataSource.query(
+            `
+              SELECT "kostId", SUM(views)::int AS views, SUM("waClicks")::int AS "waClicks"
+              FROM kost_daily_stats
+              WHERE "kostId" = ANY($1) AND date >= $2
+              GROUP BY "kostId"
+            `,
+            [
+              kostIds,
+              new Date(bookingCutoff.getTime() + 7 * 60 * 60 * 1000)
+                .toISOString()
+                .slice(0, 10),
+            ],
+          ) as Promise<Array<{ kostId: number; views: number; waClicks: number }>>)
+        : Promise.resolve([] as Array<{ kostId: number; views: number; waClicks: number }>),
       this.dataSource.query(
         `
           SELECT "kostId", COUNT(*)::int AS cnt
@@ -1932,9 +1949,19 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
     const surveyApprovalRate =
       totalSurveys > 0 ? Math.round((surveysApproved / totalSurveys) * 100) : 0;
 
+    const periodEngMap = new Map(
+      periodEngagementRows.map((r) => [Number(r.kostId), r]),
+    );
     const propertyPerformance = ownerKosts
       .map((k) => {
         const pb = propBookingMap.get(k.id);
+        const pe = periodEngMap.get(k.id);
+        const views = bookingCutoff
+          ? Number(pe?.views ?? 0)
+          : Number(k.viewCount ?? 0);
+        const waClicks = bookingCutoff
+          ? Number(pe?.waClicks ?? 0)
+          : Number(k.waClickCount ?? 0);
         return {
           kostId: k.id,
           name: k.name,
@@ -1943,8 +1970,8 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
           availableRooms: Number(k.availableRooms ?? 0),
           rating: Number(k.rating ?? 0),
           reviewCount: Number(k.reviewCount ?? 0),
-          views: Number(k.viewCount ?? 0),
-          waClicks: Number(k.waClickCount ?? 0),
+          views,
+          waClicks,
           favorites: favMap.get(k.id) ?? 0,
           surveys: Number(pb?.surveys ?? 0),
           bookings: Number(pb?.bookings ?? 0),
@@ -1961,14 +1988,21 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
           b.views - a.views,
       );
 
+    const effectiveTotalViews = bookingCutoff
+      ? propertyPerformance.reduce((sum, p) => sum + p.views, 0)
+      : totalViews;
+    const effectiveTotalWaClicks = bookingCutoff
+      ? propertyPerformance.reduce((sum, p) => sum + p.waClicks, 0)
+      : totalWaClicks;
+
     return {
       period,
       kostId: filterKostId,
       summary: {
         totalProperties: ownerKosts.length,
         totalRoomsAvailable,
-        totalViews,
-        totalWaClicks,
+        totalViews: effectiveTotalViews,
+        totalWaClicks: effectiveTotalWaClicks,
         totalFavorites,
         totalChats: Number(chatCountRow[0]?.cnt ?? 0),
         totalSurveys,

@@ -81,6 +81,28 @@ import { PlatformModule } from './platform/platform.module';
             req.url === '/api/locations/cities' &&
             !req.headers['x-forwarded-for'],
         },
+        serializers: {
+          req: (req: {
+            id?: unknown;
+            method?: string;
+            url?: string;
+            headers?: Record<string, unknown>;
+            remoteAddress?: string;
+          }) => ({
+            id: req.id,
+            method: req.method,
+            url: req.url,
+            ip:
+              req.headers?.['x-client-ip'] ||
+              req.headers?.['cf-connecting-ip'] ||
+              req.headers?.['x-forwarded-for'] ||
+              req.remoteAddress,
+            ua: req.headers?.['user-agent'],
+          }),
+          res: (res: { statusCode?: number }) => ({
+            statusCode: res.statusCode,
+          }),
+        },
         customProps: (req) => {
           const user = (req as { user?: { userId?: number; role?: string } })
             .user;
