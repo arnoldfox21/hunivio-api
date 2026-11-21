@@ -444,7 +444,7 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (query.city && query.city !== 'Semua Kota') {
-      qb.andWhere('LOWER(kost.city) = LOWER(:city)', { city: query.city });
+      this.applyCityFilter(qb, query.city);
     }
 
     if (query.district && query.district !== 'Semua Area') {
@@ -674,7 +674,7 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
       qb.andWhere('LOWER(kost.type) = LOWER(:type)', { type: query.type });
     }
     if (query.city && query.city !== 'Semua Kota') {
-      qb.andWhere('LOWER(kost.city) = LOWER(:city)', { city: query.city });
+      this.applyCityFilter(qb, query.city);
     }
 
     if (query.district && query.district !== 'Semua Area') {
@@ -684,6 +684,33 @@ export class KostsService implements OnModuleInit, OnModuleDestroy {
     }
     const list = await qb.getMany();
     return this.syncOwnerNames(list);
+  }
+
+  private applyCityFilter(
+    qb: ReturnType<Repository<Kost>['createQueryBuilder']>,
+    rawCity?: string,
+  ) {
+    const trimmed = (rawCity || '').trim().toLowerCase();
+    if (!trimmed || trimmed === 'semua kota') return;
+
+    const hasExplicitPrefix = /^(kota|kabupaten|kab\.?)\s+/i.test(trimmed);
+    if (hasExplicitPrefix) {
+      const normalizedExplicit = trimmed
+        .replace(/^kab\.?\s+/i, 'kabupaten ')
+        .replace(/\s+/g, ' ');
+      qb.andWhere('LOWER(TRIM(kost.city)) = :exactCity', {
+        exactCity: normalizedExplicit,
+      });
+    } else {
+      qb.andWhere(
+        '(LOWER(TRIM(kost.city)) = :baseCity OR LOWER(TRIM(kost.city)) = :kotaCity OR LOWER(TRIM(kost.city)) = :kabCity)',
+        {
+          baseCity: trimmed,
+          kotaCity: `kota ${trimmed}`,
+          kabCity: `kabupaten ${trimmed}`,
+        },
+      );
+    }
   }
 
   private applyCategoryFilter(

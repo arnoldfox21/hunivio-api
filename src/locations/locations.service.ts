@@ -52,38 +52,68 @@ export class LocationsService implements OnModuleInit {
 
   async searchCities(q?: string): Promise<string[]> {
     const queryText = (q || '').trim().toLowerCase();
-    const regions = await this.regionRepository.find({
-      order: { name: 'ASC' },
-    });
-    const kostCitiesRaw = await this.kostRepository
-      .createQueryBuilder('kost')
-      .select('DISTINCT kost.city', 'city')
-      .where("kost.city IS NOT NULL AND TRIM(kost.city) != ''")
-      .getRawMany<{ city: string }>();
+    const [regions, kostCitiesRaw] = await Promise.all([
+      this.regionRepository.find({
+        order: { name: 'ASC' },
+      }),
+      this.kostRepository
+        .createQueryBuilder('kost')
+        .select('kost.city', 'city')
+        .addSelect(
+          "SUM(CASE WHEN kost.approvalStatus = 'APPROVED' THEN 1 ELSE 0 END)",
+          'activeCount',
+        )
+        .where("kost.city IS NOT NULL AND TRIM(kost.city) != ''")
+        .groupBy('kost.city')
+        .getRawMany<{ city: string; activeCount: string }>(),
+    ]);
 
     const seen = new Map<string, string>();
+    const activeCountByCity = new Map<string, number>();
+
+    for (const row of kostCitiesRaw) {
+      const formatted = toTitleCaseRegion(row.city);
+      const key = formatted.toLowerCase();
+      if (!key) continue;
+      if (!seen.has(key)) seen.set(key, formatted);
+      const count = Number(row.activeCount) || 0;
+      activeCountByCity.set(key, (activeCountByCity.get(key) || 0) + count);
+    }
+
     for (const r of regions) {
       const formatted = toTitleCaseRegion(r.name);
       const key = formatted.toLowerCase();
       if (key && !seen.has(key)) seen.set(key, formatted);
     }
-    for (const row of kostCitiesRaw) {
-      const formatted = toTitleCaseRegion(row.city);
-      const key = formatted.toLowerCase();
-      if (key && !seen.has(key)) seen.set(key, formatted);
-    }
+
+    const compareCities = (a: string, b: string) => {
+      const aKey = a.toLowerCase();
+      const bKey = b.toLowerCase();
+      const aActive = activeCountByCity.get(aKey) || 0;
+      const bActive = activeCountByCity.get(bKey) || 0;
+
+      if (queryText) {
+        const aClean = aKey.replace(/^(kota|kabupaten|kab\.?)\s+/i, '').trim();
+        const bClean = bKey.replace(/^(kota|kabupaten|kab\.?)\s+/i, '').trim();
+        const aStarts =
+          aKey.startsWith(queryText) || aClean.startsWith(queryText) ? 0 : 1;
+        const bStarts =
+          bKey.startsWith(queryText) || bClean.startsWith(queryText) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+      }
+
+      if (aActive !== bActive) return bActive - aActive;
+      return a.localeCompare(b);
+    };
 
     const all = Array.from(seen.values());
-    if (!queryText) return all;
+    if (!queryText) {
+      return all.sort(compareCities);
+    }
 
     return all
       .filter((c) => c.toLowerCase().includes(queryText))
-      .sort((a, b) => {
-        const aStarts = a.toLowerCase().startsWith(queryText) ? 0 : 1;
-        const bStarts = b.toLowerCase().startsWith(queryText) ? 0 : 1;
-        if (aStarts !== bStarts) return aStarts - bStarts;
-        return a.localeCompare(b);
-      });
+      .sort(compareCities);
   }
 
   async searchDistricts(city?: string, q?: string): Promise<string[]> {
